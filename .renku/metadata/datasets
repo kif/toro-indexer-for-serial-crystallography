@@ -1,5 +1,30 @@
 {
   "@renku_data_type": "renku.infrastructure.database.RenkuOOBTree",
-  "@renku_data_value": null,
+  "@renku_data_value": {
+    "@renku_data_type": "builtins.tuple",
+    "@renku_data_value": [
+      {
+        "@renku_data_type": "builtins.tuple",
+        "@renku_data_value": [
+          {
+            "@renku_data_type": "builtins.tuple",
+            "@renku_data_value": [
+              {
+                "@renku_data_type": "builtins.tuple",
+                "@renku_data_value": [
+                  "lyso_12p4kev_1khz_150mm_run000026",
+                  {
+                    "@renku_data_type": "renku.domain_model.dataset.Dataset",
+                    "@renku_oid": "4948b2a2b71cb3dbe42baccfa7e96f604ab92130e515dd857806f8be31dd2d3c",
+                    "@renku_reference": true
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
   "@renku_oid": "datasets"
 }
