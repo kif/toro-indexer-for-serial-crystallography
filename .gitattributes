@@ -1,0 +1,1 @@
+data/lyso_12p4kev_1khz_150mm_run000026/Lyso_12p4keV_1kHz_150mm_run000026_data_000001.th6.snr4.0.mpixco1.stream filter=lfs diff=lfs merge=lfs -text
