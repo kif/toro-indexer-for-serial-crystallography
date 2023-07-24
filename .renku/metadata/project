@@ -1,0 +1,38 @@
+{
+  "@renku_data_type": "renku.domain_model.project.Project",
+  "@renku_oid": "project",
+  "agent_version": "2.6.1",
+  "annotations": [],
+  "creator": {
+    "@renku_data_type": "renku.domain_model.provenance.agent.Person",
+    "@renku_data_value": {
+      "affiliation": null,
+      "alternate_name": null,
+      "email": "lfbarba@gmail.com",
+      "id": "mailto:lfbarba@gmail.com",
+      "name": "Luis Barba"
+    }
+  },
+  "date_created": {
+    "@renku_data_type": "datetime.datetime",
+    "@renku_data_value": "2023-07-24T14:09:26.583933+00:00"
+  },
+  "description": "Serial Crystallography (SX) involves the processing of thousands of diffraction patterns in random orientations. To compile a complete data set, these patterns must be indexed, integrated, and merged. Herein, we introduce TORO (Torch-Powered Robust Optimization) Indexer, a robust, adaptable, and performant indexing algorithm. Developed using the PyTorch framework, TORO Indexer can operate on GPUs, CPUs, TPUs, and other accelerators supported by PyTorch, ensuring it adapts to a broad range of computational setups. On a modern NVIDIA A100 GPU, TORO achieves an indexing speed of 250 images/s. ",
+  "id": "/projects/lfbarba/toro-indexer-for-serial-crystallography",
+  "keywords": [],
+  "minimum_renku_version": "2.4.0",
+  "name": "TORO Indexer for serial crystallography",
+  "template_metadata": {
+    "@renku_data_type": "renku.domain_model.project.ProjectTemplateMetadata",
+    "@renku_data_value": {
+      "immutable_template_files": [],
+      "metadata": "{\"__template_source__\": \"https://github.com/SwissDataScienceCenter/renku-project-template\", \"__template_ref__\": \"0.7.0\", \"__template_id__\": \"python-minimal\", \"__namespace__\": \"lfbarba\", \"__repository__\": \"https://renkulab.io/gitlab\", \"__sanitized_project_name__\": \"toro-indexer-for-serial-crystallography\", \"__project_slug__\": \"lfbarba/toro-indexer-for-serial-crystallography\", \"__project_description__\": \"Serial Crystallography (SX) involves the processing of thousands of diffraction patterns in random orientations. To compile a complete data set, these patterns must be indexed, integrated, and merged. Herein, we introduce TORO (Torch-Powered Robust Optimization) Indexer, a robust, adaptable, and performant indexing algorithm. Developed using the PyTorch framework, TORO Indexer can operate on GPUs, CPUs, TPUs, and other accelerators supported by PyTorch, ensuring it adapts to a broad range of computational setups. On a modern NVIDIA A100 GPU, TORO achieves an indexing speed of 250 images/s. \", \"__renku_version__\": \"2.6.1\", \"name\": \"TORO Indexer for serial crystallography\", \"__name__\": \"TORO Indexer for serial crystallography\", \"__template_version__\": \"75b281eefe3b1b34c064363db2c46ecfa70d2ea4\", \"__automated_update__\": true}",
+      "ssh_supported": true,
+      "template_id": "python-minimal",
+      "template_ref": "0.7.0",
+      "template_source": "https://github.com/SwissDataScienceCenter/renku-project-template",
+      "template_version": "75b281eefe3b1b34c064363db2c46ecfa70d2ea4"
+    }
+  },
+  "version": 10
+}
