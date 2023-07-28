@@ -336,3 +336,9 @@ tags
 .renku.lock
 .renku/tmp
 .renku/cache
+.idea/vcs.xml
+.idea/toro-indexer-for-serial-crystallography.iml
+.idea/modules.xml
+.idea/misc.xml
+.idea/inspectionProfiles/Project_Default.xml
+.idea/inspectionProfiles/profiles_settings.xml

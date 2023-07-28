@@ -7,6 +7,15 @@ import sys
 
 
 def batched_invert_matrix(A):
+    """
+        Inverts a batch of 3x3 matrices and returns NaN if any matrix is not invertible.
+
+        Args:
+            matrix_batch (torch.Tensor): Input tensor of shape (n, 3, 3) representing n 3x3 matrices.
+
+        Returns:
+            torch.Tensor: Output tensor of shape (n, 3, 3) representing the inverted matrices with NaN for non-invertible ones.
+        """
     M = A.reshape(-1, 9)
     a = M[:, 0]
     b = M[:, 1]
@@ -37,39 +46,14 @@ def batched_invert_matrix(A):
     return entries
 
 
-def compute_center(source):
-    """
-    Estimate the center of a bunch of points sampled on the boundary of the sphere
-    @param source: n,3 points on the surface of the sphere
-    @return: The center and radius of the sphere
-    """
-    lift = torch.stack([
-        2 * source[:, 0],
-        2 * source[:, 1],
-        2 * source[:, 2],
-        torch.ones(len(source)).to(source.device)
-    ], 1).to(source.device)
-
-    targets = source[:, 0] ** 2 + source[:, 1] ** 2 + source[:, 2] ** 2
-
-    s, _, _, _ = torch.linalg.lstsq(lift, targets.unsqueeze(1))
-    s = s.reshape(-1).to(source.device)
-    return s[:3], torch.sqrt(s[3] + s[0] ** 2 + s[1] ** 2 + s[2] ** 2)
-
-
-def compute_intersection_with_sphere(source, center):
-    normalized_source = normalize(source, dim=-1)
-
-    # Calculate the projection of the centers onto the rays in the directions of normalized_source
-    t = torch.sum(normalized_source * center, dim=-1)
-
-    # Since the closest point lies exactly in the middle between the center and the desired inetrsection
-    intersections = 2 * t[:, :, :, None] * normalized_source
-
-    return intersections
-
-
 def rotations(rodrigues_vector, alpha, angle_resolution: int):
+    """
+    This function uses the Rodrigues forumla to create rotations around the given rodrigues_vector with the given angle alpha
+    @param rodrigues_vector: The vector around which to create the rotation matrices
+    @param alpha: The angle od the rotation
+    @param angle_resolution: The number of samples to be generated.
+    @return: A tensor of bs, angle_resolution, 3, 3 containing bs * angle resolution rotation matrices, each rotating the corresponding alpha degrees given
+    """
     ip = normalize(rodrigues_vector)
     new_ip = ip.flip(1)
     new_ip[:, 1] *= -1
@@ -83,6 +67,11 @@ def rotations(rodrigues_vector, alpha, angle_resolution: int):
 
 
 def batched_compute_angles(triples):
+    """
+    Computes the angles between the vectors of 3x3 bases. this is use to compute the quality of solution bases.
+    @param triples: A tensor of shape bs, 3, 3 with bs bases
+    @return: The angles alpha, beta and gamma between the consecutive vectors.
+    """
     triples = torch.nn.functional.normalize(triples, dim=-1)
     alpha = torch.acos(torch.sum(triples[:, 0] * triples[:, 1], dim=-1)) * 180 / math.pi
     beta = torch.acos(torch.sum(triples[:, 0] * triples[:, 2], dim=-1)) * 180 / math.pi
@@ -91,6 +80,12 @@ def batched_compute_angles(triples):
 
 
 def compute_penalization(matrix, initial_cell):
+    """
+    Computes de penalization used to skew the solutions to be as close as possible to the given ideal basis.
+    @param matrix: The matrix to be tested
+    @param initial_cell: the ideal basis
+    @return: A penalization score that depends on how much matrix deviates from the structure of the initial_cell
+    """
     device = matrix.device
     diff_cell = torch.abs(
         matrix.norm(dim=-1, p=2) - initial_cell[:3].norm(dim=-1, p=2).to(device)
@@ -124,6 +119,11 @@ def batched_subset_from_indices(input, indices):
 
 
 def create_sphere_lattice(num_points: int = 1000000):
+    """
+    Samples num_points vectors from the unit sphere using the golden ratio spiral.
+    @param num_points: The number of vectors to be sampled
+    @return: A collection of sampled vectors.
+    """
     goldenRatio = (1 + 5 ** 0.5) / 2
     i = arange(0, num_points)
     theta = 2 * pi * i / goldenRatio
@@ -136,17 +136,12 @@ def create_sphere_lattice(num_points: int = 1000000):
     return lattice
 
 
-def unsqueeze_if_needed(s, len_shape_single_item: int):
-    if len(s.shape) == len_shape_single_item:
-        return s.unsqueeze(0), True
-    elif len(s.shape) == len_shape_single_item + 1:
-        return s, False
-    else:
-        raise Exception("Not a valid number of dimension for s")
-
-
-def to_skew_symmetric(x):  # bs, 3
-    x, unsqueezed = unsqueeze_if_needed(x, len_shape_single_item=1)
+def to_skew_symmetric(x):
+    """
+    Takes a tensor bs, 3 of vectors in R^3 and creates the skew symmetric matrix corresponding to them.
+    @param x: The input vector
+    @return: The tensor bs, 3, 3 with the skew symmetric matrices corresponding to x
+    """
     out = torch.zeros(x.shape[0], 3, 3).to(x.device)
     out[:, 0, 1] = x[:, 0]
     out[:, 0, 2] = x[:, 1]
@@ -154,13 +149,17 @@ def to_skew_symmetric(x):  # bs, 3
     out[:, 1, 2] = x[:, 2]
     out[:, 2, 0] = -x[:, 1]
     out[:, 2, 1] = -x[:, 2]
-    return out.squeeze(0) if unsqueezed else out
+    return out
 
 
 def rotation_to_target(sources, targets):
-    sources, _ = unsqueeze_if_needed(sources, len_shape_single_item=1)
-    targets, unsqueezed = unsqueeze_if_needed(targets, len_shape_single_item=1)
-
+    """
+    Construct rotation matrices in SO3 that map the vectors of source to those of tarhets, i.e.
+    It takes s and t as input and creates a rotaiton matrix R such that Rs = t
+    @param sources: a tensor bs, 3 with sources
+    @param targets: a tensor bs, 3 with targets
+    @return: a tensor bs, 3, 3 with the corresponding rotation matrices
+    """
     sources = normalize(sources, dim=-1)
     targets = normalize(targets, dim=-1)
     V = torch.cross(sources, targets)
@@ -174,37 +173,47 @@ def rotation_to_target(sources, targets):
     SS2 = torch.bmm(SS, SS)
     I = torch.stack(sources.shape[0] * [torch.diag(torch.ones(3))], 0).to(sources.device)
     R = I + SS + ((1 - C) / S ** 2)[:, None, None] * SS2
-    return R if not unsqueezed else R.squeeze(0)
+    return R
+
+
+def bcompute_penalization(X, Y):
+    """
+    Batched version of compute_penalization
+    @param X: batched inputs
+    @param Y: batched inputs
+    @return: batched output
+    """
+    first = int(X.shape[0])
+    second = int(X.shape[1])
+    result = compute_penalization(X.flatten(0, 1), Y.flatten(0, 1))
+    return result.unflatten(0, [first, second])
+
+
+def bb_inverse(X):
+    """
+    Batched version of batched_invert_matrix
+    @param X: batched inputs
+    @return: batched output
+    """
+    first = int(X.shape[0])
+    second = int(X.shape[1])
+    result = batched_invert_matrix(X.flatten(0, 1))
+    return result.unflatten(0, [first, second])
 
 
 class IndexerModule(nn.Module):
-    def __init__(self, lattice_size, num_iterations: int = 10, error_precision: float = 0.0018,
-                 filter_precision: float = 0.0012, filter_min_num_spots: int = 6,
-                 ewald_correction: bool = True, ewald_thickness: float = 0.005):
+    def __init__(self, lattice_size, num_iterations: int = 5, error_precision: float = 0.0015,
+                 filter_precision: float = 0.00075, filter_min_num_spots: int = 6):
         super(IndexerModule, self).__init__()
+
         self.unite_sphere_lattice = torch.nn.Parameter(create_sphere_lattice(num_points=lattice_size))
         self.filter_precision = float(filter_precision)
         self.filter_min_num_spots = int(filter_min_num_spots)
         gettrace = getattr(sys, 'gettrace', None)
         self.debugging = gettrace is not None
-        # self.debugging = False
-        self.ewald_correction = bool(ewald_correction)
         self.error_precision = float(error_precision)
-        self.ewald_thickness = float(ewald_thickness)
         self.num_iterations = int(num_iterations)
         self.solution_sources = torch.zeros(0)
-
-    def bcompute_penalization(self, X, Y):
-        first = int(X.shape[0])
-        second = int(X.shape[1])
-        result = compute_penalization(X.flatten(0, 1), Y.flatten(0, 1))
-        return result.unflatten(0, [first, second])
-
-    def bb_inverse(self, X):
-        first = int(X.shape[0])
-        second = int(X.shape[1])
-        result = batched_invert_matrix(X.flatten(0, 1))
-        return result.unflatten(0, [first, second])
 
     def compute_triples(
             self,
@@ -238,7 +247,8 @@ class IndexerModule(nn.Module):
         unit_projections = unite_sphere_lattice @ source.flatten(0, 1).T
         unit_projections = unit_projections.unflatten(1, [bs, -1]).permute(1, 0, 2)
 
-        # We use the information of the dot products with the unit sphere to generate the dot products with the scaled sphere vectors
+        # We use the information of the dot products with the unit
+        # sphere to generate the dot products with the scaled sphere vectors
         projections = torch.stack([unit_projections * factor for factor in scaling], 0)
         h = torch.round(projections)
 
@@ -264,7 +274,7 @@ class IndexerModule(nn.Module):
         expanded_candidates = candidates.unflatten(1, [3, -1]).permute(1, 0, 2, 3).flatten(0, 1)
         all_candidates = batched_subset_from_indices(expanded_candidates, indices.flatten(0, 1)).unflatten(0, [3, -1])
 
-        # We do fitting of the directions
+        # We perform a Trimmed Least Squares method with arror threshold annealing to find the best vectors
         for d in [0.1, 0.05, 0.025, 0.01]:
             projections = torch.bmm(all_candidates.permute(1, 0, 2, 3).flatten(1, 2), source.permute(0, 2, 1))
             projections = projections.unflatten(1, [3, -1]).permute(1, 0, 2, 3)
@@ -279,8 +289,9 @@ class IndexerModule(nn.Module):
                 bs * 3 * all_candidates.shape[2], -1, 3)
 
             # Use a fitting but with a mask that takes only into account points closer to their target
-            refined_candidates = torch.linalg.lstsq(e_source * flat_mask[:, :, None], flat_h * flat_mask[:, :, None])[
-                0]  # solutions is flatten bs, 3, len(unite_lattice)
+            refined_candidates = torch.linalg.lstsq(
+                e_source * flat_mask[:, :, None], flat_h * flat_mask[:, :, None]
+            )[0]  # solutions is flatten bs, 3, len(unite_lattice)
             all_candidates = refined_candidates.unflatten(0, [bs, 3, -1]).squeeze(-1).transpose(0, 1)
 
         diff = torch.abs(projections - h)
@@ -343,6 +354,8 @@ class IndexerModule(nn.Module):
         Decides if the pair base, inliers makes a valid solution or not according to their error
         @param base: bs x 3 x 3 with a, b and c as row vectors in primal space.
         @param source: bs x k x 3 with k < n the set of spots indexed by base projected on the Ewald sphere in reciprocal space.
+        @param min_num_spots: minimum number of spots of a valid solution
+        @param precision: The precision of a valid solution
         @return: Sucess flag for each of the batches of base, i.e., a boolean vector of size bs
         """
 
@@ -381,7 +394,7 @@ class IndexerModule(nn.Module):
                 num_top_solutions *= 2
                 angle_resolution *= 2
 
-            # paramters
+            # fixed hyperparameter
             valid_integer_projection_radius = float(0.2)
 
             bs = int(len(source))
@@ -429,7 +442,7 @@ class IndexerModule(nn.Module):
                 self.top_triples = top_triples.clone().detach()
 
             # We extract iteratively the best solutions and ignore the spots they contain for subsequent rounds
-            # while there is still a solution that contains at lest the min_num_spots, in this way we fin dmulti crystals
+            # while there is still a solution that contains at lest the min_num_spots, in this way we find multicrystals
 
             solution_triples = []
             solution_masks = []
@@ -511,47 +524,9 @@ class IndexerModule(nn.Module):
 
             # we compute now the inverse of the targets in reciprocal space which will be compared against source
             predictions = source @ transposed_triples
-            back_points = torch.round(predictions) @ self.bb_inverse(transposed_triples)
+            back_points = torch.round(predictions) @ bb_inverse(transposed_triples)
 
             non_zero_mask = torch.sum(torch.abs(source), dim=-1) != 0
-
-            # Guesses the position of the reciprocal peaks in source so that it matches best the targets
-            # This uses the freedom of the width of the Ewald sphere and is thought for pink-beam data
-            if self.ewald_correction:
-                # estimate the wavelength
-                center, radius = compute_center(source[0][0])
-                wavelength = 1 / radius
-                ewald_thickness = self.ewald_thickness
-
-                # each point in source is allowed to move in the portion of the ray going from the origin
-                # to the reciprocal point that lies inside the width of the Ewald sphere.
-
-                small_radius = float(1 / wavelength * (1 + ewald_thickness))
-                large_radius = float(1 / wavelength * (1 - ewald_thickness))
-
-                small_center = small_radius * center / radius
-                large_center = large_radius * center / radius
-
-                # We compute the endpoints of the valid segment for each point in source
-                source_small = compute_intersection_with_sphere(source, small_center)
-                source_large = compute_intersection_with_sphere(source, large_center)
-
-                # We compute the closest point in the valid segment to the target point and move the
-                # reciprocal points to these locations.
-                A = source_large[non_zero_mask] - source_small[non_zero_mask]
-                B = back_points[non_zero_mask] - source_small[non_zero_mask]
-
-                normalized_A = normalize(A, dim=-1)
-
-                # Calculate the projection of the centers onto the rays in the directions of normalized_source
-                t = torch.sum(normalized_A * B, dim=-1)
-                t = torch.clip(t, torch.zeros_like(t), A.norm(dim=-1, p=2))
-
-                # Since the closest point lies exactly in the middle between the center and the desired inetrsection
-                new_source = source_small[non_zero_mask] + t[:, None] * normalized_A
-
-                source = torch.zeros_like(source)
-                source[non_zero_mask] = new_source
 
             # we compute now the new error
             error = torch.norm(source - back_points, dim=-1)
@@ -560,7 +535,7 @@ class IndexerModule(nn.Module):
             source_mask &= non_zero_mask
 
         # we should discard solutions that look at crystals differing too much from the given solution
-        penalization = self.bcompute_penalization(
+        penalization = bcompute_penalization(
             triples,
             initial_cell.repeat(int(len(triples)), 1, 1)
         )
