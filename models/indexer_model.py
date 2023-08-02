@@ -209,11 +209,11 @@ class IndexerModule(nn.Module):
         self.unite_sphere_lattice = torch.nn.Parameter(create_sphere_lattice(num_points=lattice_size))
         self.filter_precision = float(filter_precision)
         self.filter_min_num_spots = int(filter_min_num_spots)
-        gettrace = getattr(sys, 'gettrace', None)
-        self.debugging = gettrace is not None
         self.error_precision = float(error_precision)
         self.num_iterations = int(num_iterations)
         self.solution_sources = torch.zeros(0)
+        gettrace = getattr(sys, 'gettrace', None)
+        self.debugging = gettrace is not None
 
     def compute_triples(
             self,
@@ -252,15 +252,11 @@ class IndexerModule(nn.Module):
         projections = torch.stack([unit_projections * factor for factor in scaling], 0)
         h = torch.round(projections)
 
-        # Using only the sampling of the sphere as candidates
-        candidates = unite_sphere_lattice.expand(bs, 3, len(unite_sphere_lattice), 3)
-        candidates = candidates.clone() * scaling[None, :, None, None]
-        candidates = candidates.flatten(1, 2)
-
-        projections = torch.bmm(candidates, source.permute(0, 2, 1))
-        projections = projections.unflatten(1, [3, -1]).permute(1, 0, 2, 3)
-
-        h = torch.round(projections)
+        # We explicitly create the candidates from the unit sphere mapping by triplicating it
+        # and then scaling it accordingly
+        unit_candidates = unite_sphere_lattice.expand(bs, 3, len(unite_sphere_lattice), 3)
+        unit_candidates = unit_candidates * scaling[None, :, None, None]
+        unit_candidates = unit_candidates.flatten(1, 2)
 
         diff = torch.abs(projections - h)
         is_inlier = diff <= dist_to_integer
@@ -271,10 +267,10 @@ class IndexerModule(nn.Module):
         indices = combined_loss.int().sort(descending=True, dim=-1).indices[:, :, 0: 50 * num_top_solutions].to(
             device)
 
-        expanded_candidates = candidates.unflatten(1, [3, -1]).permute(1, 0, 2, 3).flatten(0, 1)
+        expanded_candidates = unit_candidates.unflatten(1, [3, -1]).permute(1, 0, 2, 3).flatten(0, 1)
         all_candidates = batched_subset_from_indices(expanded_candidates, indices.flatten(0, 1)).unflatten(0, [3, -1])
 
-        # We perform a Trimmed Least Squares method with arror threshold annealing to find the best vectors
+        # We perform a Trimmed Least Squares method with error threshold annealing to find the best vectors
         for d in [0.1, 0.05, 0.025, 0.01]:
             projections = torch.bmm(all_candidates.permute(1, 0, 2, 3).flatten(1, 2), source.permute(0, 2, 1))
             projections = projections.unflatten(1, [3, -1]).permute(1, 0, 2, 3)
@@ -294,21 +290,21 @@ class IndexerModule(nn.Module):
             )[0]  # solutions is flatten bs, 3, len(unite_lattice)
             all_candidates = refined_candidates.unflatten(0, [bs, 3, -1]).squeeze(-1).transpose(0, 1)
 
+        # After TLS, we score anr rank the resulting vectors and take only the top num_top_solutions
         diff = torch.abs(projections - h)
         is_inlier = diff <= 0.01
         is_inlier &= (torch.sum(torch.abs(source), dim=-1) != 0)[None, :, None, :]
-
         combined_loss = torch.sum(is_inlier, dim=-1)
-
         indices = combined_loss.int().sort(descending=True, dim=-1).indices[:, :, 0:num_top_solutions].to(
             device)
-
         expanded_candidates = all_candidates.flatten(0, 1)
         all_candidates = batched_subset_from_indices(expanded_candidates, indices.flatten(0, 1)).unflatten(0, [3, -1])
 
         if self.debugging:
             self.candidates = all_candidates.clone().detach()
 
+        # We attach a basis to each of the candidates and rotate it around the candidate vector to produce
+        # candidate bases which are 3x3
         rotated_triple_systems = []
         for i, candidates in enumerate(all_candidates):
             permutation = [i, (i + 1) % 3, (i + 2) % 3]
