@@ -225,18 +225,18 @@ class IndexerModule(nn.Module):
             angle_resolution: int = 360
     ):
         """
-        Computes the triple systems that are going to be candidates for solutions.
+        Computes the bases that are going to be candidates for solutions.
         Takes the first vector from the unite_sphere_lattice scaled by the length of the first vefctor of the initial_cell,
         and filters possible solutions by looking at those that have more integer projections.
         Then it attaches to each of those a copy of the initial_cell, and rotataes them angle_resolution times by keeping the first vector fixed.
-        In this way it obtains a set of candidate triple systems
+        In this way it obtains a set of candidate bases
         @param source: The spots as 3D points projected on the Ewald sphere
         @param unite_sphere_lattice: A sample of points on the unit sphere
         @param initial_cell: The given initial basis cell for this molecule
         @param dist_to_integer: The maximum allowed distance for a projection to its closest integer to be considered as a true spot
         @param num_top_solutions: the number of vectors from the scaled unite_sphere_lattice that will be considered for the second part of the algorithm
         @param angle_resolution: The number of initial_cell that will be attached to each of the candidate vectors in the first direction.
-        @return: A tensor of the form kx3x3, containing the top k triple systems, where k = num_top_solutions
+        @return: A tensor of the form kx3x3, containing the top k bases, where k = num_top_solutions
         """
 
         device = source.device
@@ -305,7 +305,7 @@ class IndexerModule(nn.Module):
 
         # We attach a basis to each of the candidates and rotate it around the candidate vector to produce
         # candidate bases which are 3x3
-        rotated_triple_systems = []
+        rotated_bases = []
         for i, candidates in enumerate(all_candidates):
             permutation = [i, (i + 1) % 3, (i + 2) % 3]
             inverse_permutation = [(i + i) % 3, (i + 1 + i) % 3, (i + 2 + i) % 3]
@@ -313,29 +313,29 @@ class IndexerModule(nn.Module):
             all_basis = current_cell.repeat(candidates.shape[0], candidates.shape[1], 1, 1).to(device)
 
             R = rotation_to_target(all_basis[:, :, 0].flatten(0, 1), candidates.flatten(0, 1))
-            triple_systems = torch.bmm(R, all_basis.flatten(0, 1).transpose(1, 2)).permute(0, 2, 1)
+            bases = torch.bmm(R, all_basis.flatten(0, 1).transpose(1, 2)).permute(0, 2, 1)
             # recover the size of the candidate
-            triple_systems = torch.stack(
+            bases = torch.stack(
                 [candidates.flatten(0, 1),
-                 triple_systems[:, 1, :],
-                 triple_systems[:, 2, :]], 1
+                 bases[:, 1, :],
+                 bases[:, 2, :]], 1
             )
 
             alpha = 2 * math.pi * torch.arange(angle_resolution) / angle_resolution
             R = rotations(candidates.flatten(0, 1), alpha.to(device), angle_resolution)
 
-            bts = triple_systems.transpose(1, 2).repeat(angle_resolution, 1, 1, 1).transpose(0, 1)
+            bts = bases.transpose(1, 2).repeat(angle_resolution, 1, 1, 1).transpose(0, 1)
             M = torch.bmm(R.reshape(-1, 3, 3), bts.reshape(-1, 3, 3)).permute(0, 2, 1)
-            rotated_triple_systems.append(M.view(-1, 3, 3)[:, inverse_permutation, :].unflatten(0, [bs, -1]))
-        rotated_triple_systems = torch.cat(rotated_triple_systems, 1)
-        return rotated_triple_systems
+            rotated_bases.append(M.view(-1, 3, 3)[:, inverse_permutation, :].unflatten(0, [bs, -1]))
+        rotated_bases = torch.cat(rotated_bases, 1)
+        return rotated_bases
 
-    def compute_scores_and_hkl(self, source, rotated_triple_systems, dist_to_integer: float = 0.12):
-        rearanged_triple_systems = rotated_triple_systems.permute(0, 2, 3, 1)
+    def compute_scores_and_hkl(self, source, rotated_bases, dist_to_integer: float = 0.12):
+        rearanged_bases = rotated_bases.permute(0, 2, 3, 1)
         projections = torch.stack([
-            torch.bmm(source, rearanged_triple_systems[:, 0, :, :]),
-            torch.bmm(source, rearanged_triple_systems[:, 1, :, :]),
-            torch.bmm(source, rearanged_triple_systems[:, 2, :, :])
+            torch.bmm(source, rearanged_bases[:, 0, :, :]),
+            torch.bmm(source, rearanged_bases[:, 1, :, :]),
+            torch.bmm(source, rearanged_bases[:, 2, :, :])
         ], -1).permute(0, 2, 1, 3)
 
         hkl = torch.round(projections)
@@ -491,7 +491,7 @@ class IndexerModule(nn.Module):
             num_iterations: int
     ):
         """
-        @param bases: candidate triple solutions
+        @param bases: candidate basis solutions
         @param source: Points on the Ewald sphere in reciprocal space to index
         @param source_mask: A 0-1-mask of the source points indicating which are active
         @param initial_cell: The given cell defining the reciprocal lattice
