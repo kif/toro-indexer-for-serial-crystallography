@@ -66,16 +66,16 @@ def rotations(rodrigues_vector, alpha, angle_resolution: int):
     return R.permute(1, 0, 2, 3)
 
 
-def batched_compute_angles(triples):
+def batched_compute_angles(bases):
     """
     Computes the angles between the vectors of 3x3 bases. this is use to compute the quality of solution bases.
-    @param triples: A tensor of shape bs, 3, 3 with bs bases
+    @param bases: A tensor of shape bs, 3, 3 with bs bases
     @return: The angles alpha, beta and gamma between the consecutive vectors.
     """
-    triples = torch.nn.functional.normalize(triples, dim=-1)
-    alpha = torch.acos(torch.sum(triples[:, 0] * triples[:, 1], dim=-1)) * 180 / math.pi
-    beta = torch.acos(torch.sum(triples[:, 0] * triples[:, 2], dim=-1)) * 180 / math.pi
-    gamma = torch.acos(torch.sum(triples[:, 1] * triples[:, 2], dim=-1)) * 180 / math.pi
+    bases = torch.nn.functional.normalize(bases, dim=-1)
+    alpha = torch.acos(torch.sum(bases[:, 0] * bases[:, 1], dim=-1)) * 180 / math.pi
+    beta = torch.acos(torch.sum(bases[:, 0] * bases[:, 2], dim=-1)) * 180 / math.pi
+    gamma = torch.acos(torch.sum(bases[:, 1] * bases[:, 2], dim=-1)) * 180 / math.pi
     return torch.stack([alpha, beta, gamma], 1)
 
 
@@ -133,7 +133,7 @@ def create_sphere_lattice(num_points: int = 1000000):
     lattice[:, 0] = torch.FloatTensor(x)
     lattice[:, 1] = torch.FloatTensor(y)
     lattice[:, 2] = torch.FloatTensor(z)
-    return lattice
+    return lattice[lattice[:, -1] >= 0]
 
 
 def to_skew_symmetric(x):
@@ -215,7 +215,7 @@ class IndexerModule(nn.Module):
         gettrace = getattr(sys, 'gettrace', None)
         self.debugging = gettrace is not None
 
-    def compute_triples(
+    def sample_bases(
             self,
             source,
             unite_sphere_lattice,
@@ -373,61 +373,53 @@ class IndexerModule(nn.Module):
         @param source: bacthed 3D Points on the Ewald sphere bs, num_points, 3
         @param initial_cell: The given lattice cell in primal space 3,3
         @param min_num_spots: the minimum number of spots that a valid solution most have
-        @param angle_resolution: The number of samples used to rotate the given triples
+        @param angle_resolution: The number of samples used to rotate the given bases
         @param num_top_solutions: The number of candidate solutions to be considered by the algorithm
         @return: solution_successes (boolean vector of size bs x num_crystals),
-        solution_triples (solution cells bs x num_crystals x 3 x 3),
+        solution_bases (solution cells bs x num_crystals x 3 x 3),
         solution_masks (boolean mask of source indicating elements of each solution bs x num_crystals x num_points) ,
         solution_errors (float tensor with the error of the solutions bs x num_crystals) ,
         solution_penalization (float tensor with the penalization used in the solutions bs x num_crystals)
         """
         with torch.no_grad():
-            # crank up parameters if num spots is low
-            if source.shape[1] <= 30:
-                num_top_solutions = int(500)
-                angle_resolution = int(500)
-            elif source.shape[1] <= 50:
-                num_top_solutions *= 2
-                angle_resolution *= 2
-
             # fixed hyperparameter
             valid_integer_projection_radius = float(0.2)
 
             bs = int(len(source))
 
-            rotated_triple_systems = self.compute_triples(
+            candidate_bases = self.sample_bases(
                 source,
                 self.unite_sphere_lattice.to(source.device),
                 initial_cell,
                 dist_to_integer=valid_integer_projection_radius,
-                num_top_solutions=int(num_top_solutions // 2),
+                num_top_solutions=num_top_solutions,
                 angle_resolution=angle_resolution
             )
 
             if self.debugging:
-                self.raw_triples = rotated_triple_systems.clone().detach()
+                self.raw_bases = candidate_bases.clone().detach()
 
             scores, _, is_inlier = self.compute_scores_and_hkl(
                 source,
-                rotated_triple_systems,
+                candidate_bases,
                 dist_to_integer=valid_integer_projection_radius
             )
 
-            # We take the indices of the top num_triples scores
+            # We take the indices of the top num_bases scores
             indices = scores.int().argsort(descending=True, dim=-1)[:, 0:num_top_solutions]
-            # We consider from now on only the triples correspondig to these top indices
-            rotated_triple_systems = batched_subset_from_indices(rotated_triple_systems, indices)
+            # We consider from now on only the bases correspondig to these top indices
+            candidate_bases = batched_subset_from_indices(candidate_bases, indices)
 
             if self.debugging:
-                self.filtered_triples = rotated_triple_systems.clone().detach()
+                self.filtered_bases = candidate_bases.clone().detach()
 
             # We update the is_inlier mask with the same indices
             is_inlier = batched_subset_from_indices(is_inlier, indices)
             non_zero_mask = torch.sum(torch.abs(source), dim=-1) != 0
             is_inlier &= non_zero_mask.repeat(is_inlier.shape[1], 1, 1).transpose(0, 1)
 
-            tuned_sources, top_triples, source_mask, error, penalization = self.index_candidate_solutions(
-                rotated_triple_systems,
+            tuned_sources, top_bases, source_mask, error, penalization = self.index_candidate_solutions(
+                candidate_bases,
                 source.repeat(num_top_solutions, 1, 1, 1).transpose(0, 1),
                 is_inlier,
                 initial_cell,
@@ -435,12 +427,12 @@ class IndexerModule(nn.Module):
             )
 
             if self.debugging:
-                self.top_triples = top_triples.clone().detach()
+                self.top_bases = top_bases.clone().detach()
 
             # We extract iteratively the best solutions and ignore the spots they contain for subsequent rounds
             # while there is still a solution that contains at lest the min_num_spots, in this way we find multicrystals
 
-            solution_triples = []
+            solution_bases = []
             solution_masks = []
             solution_errors = []
             solution_penalization = []
@@ -454,8 +446,8 @@ class IndexerModule(nn.Module):
                               dim=-1)).int() > min_num_spots:
                 # We now find the best solution
                 solution_instance = torch.argmax(torch.sum(source_mask, dim=-1).int(), dim=-1)
-                solution_triples.append(
-                    batched_subset_from_indices(top_triples, solution_instance.unsqueeze(1)).squeeze(1))
+                solution_bases.append(
+                    batched_subset_from_indices(top_bases, solution_instance.unsqueeze(1)).squeeze(1))
                 solution_masks.append(
                     batched_subset_from_indices(source_mask, solution_instance.unsqueeze(1)).squeeze(1))
                 solution_sources.append(
@@ -468,43 +460,43 @@ class IndexerModule(nn.Module):
                 source_mask *= (~solution_masks[-1])[:, None, :]
                 solution_instance = torch.argmax(torch.sum(source_mask, dim=-1).int() - penalization, dim=-1)
 
-            if not solution_triples:
+            if not solution_bases:
                 return torch.zeros(0), torch.zeros(0), torch.zeros(0), torch.zeros(0), torch.zeros(0)
 
-            solution_triples = torch.stack(solution_triples, 1)
+            solution_bases = torch.stack(solution_bases, 1)
             solution_masks = torch.stack(solution_masks, 1)
             solution_errors = torch.stack(solution_errors, 1)
             solution_penalization = torch.stack(solution_penalization, 1)
             solution_sources = torch.stack(solution_sources, 1)
 
-            source_for_filtering = source.repeat(int(solution_triples.shape[1]), 1, 1, 1).transpose(0, 1)
+            source_for_filtering = source.repeat(int(solution_bases.shape[1]), 1, 1, 1).transpose(0, 1)
 
             solution_successes = self.bfilter_solution(
-                solution_triples.flatten(0, 1),
+                solution_bases.flatten(0, 1),
                 source_for_filtering.flatten(0, 1) * solution_masks.flatten(0, 1)[:, :, None],
                 precision=self.filter_precision,
                 min_num_spots=self.filter_min_num_spots
             ).unflatten(0, [bs, -1])
 
             self.solution_sources = solution_sources
-            return solution_successes, solution_triples, solution_masks, torch.max(solution_errors,
+            return solution_successes, solution_bases, solution_masks, torch.max(solution_errors,
                                                                                    dim=-1).values, solution_penalization
 
     def index_candidate_solutions(
             self,
-            triples,
+            bases,
             source,
             source_mask,
             initial_cell,
             num_iterations: int
     ):
         """
-        @param triples: candidate triple solutions
+        @param bases: candidate triple solutions
         @param source: Points on the Ewald sphere in reciprocal space to index
         @param source_mask: A 0-1-mask of the source points indicating which are active
         @param initial_cell: The given cell defining the reciprocal lattice
         @param num_iterations: The num of iterations to run the algorithm
-        @return: The candidate triples for the indexing, the source_mask, the error and the penalization
+        @return: The candidate bases for the indexing, the source_mask, the error and the penalization
         """
         start = 0.01
         base = 2 ** (math.log(self.error_precision * 100) / ((num_iterations - 1) * math.log(2)))
@@ -513,14 +505,14 @@ class IndexerModule(nn.Module):
         for round in range(num_iterations):
             # We turn to zeros the locations that should not be considered for fitting
             masked_source = source * source_mask[:, :, :, None]
-            targets = torch.round(masked_source @ triples.transpose(2, 3))
+            targets = torch.round(masked_source @ bases.transpose(2, 3))
             # The regression intrinsically ignores all zero vectors that have zero targets as their residual is zero
-            transposed_triples = torch.linalg.lstsq(masked_source, targets)[0]
-            triples = transposed_triples.transpose(2, 3)
+            transposed_bases= torch.linalg.lstsq(masked_source, targets)[0]
+            bases = transposed_bases.transpose(2, 3)
 
             # we compute now the inverse of the targets in reciprocal space which will be compared against source
-            predictions = source @ transposed_triples
-            back_points = torch.round(predictions) @ bb_inverse(transposed_triples)
+            predictions = source @ transposed_bases
+            back_points = torch.round(predictions) @ bb_inverse(transposed_bases)
 
             non_zero_mask = torch.sum(torch.abs(source), dim=-1) != 0
 
@@ -532,8 +524,8 @@ class IndexerModule(nn.Module):
 
         # we should discard solutions that look at crystals differing too much from the given solution
         penalization = bcompute_penalization(
-            triples,
-            initial_cell.repeat(int(len(triples)), 1, 1)
+            bases,
+            initial_cell.repeat(int(len(bases)), 1, 1)
         )
 
-        return source, triples, source_mask, error * source_mask, penalization
+        return source, bases, source_mask, error * source_mask, penalization
