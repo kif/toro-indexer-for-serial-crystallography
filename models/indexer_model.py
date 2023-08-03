@@ -13,11 +13,11 @@ def batched_invert_matrix(A):
     """
     M = A.reshape(-1, 9)
     a, b, c, d, e, f, g, h, i = [x.squeeze(-1) for x in torch.split(M, [1 for _ in range(9)], dim=-1)]
-    coefficent = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
+    coefficient = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
     entries = torch.stack([e * i - f * h, c * h - b * i, b * f - c * e, f * g - d * i,
                a * i - c * g, c * d - a * f, d * h - e * g, b * g - a * h, a * e - b * d], dim=1)
     for k in range(9):
-        entries[:, k] /= coefficent
+        entries[:, k] /= coefficient
     entries = entries.reshape(-1, 3, 3)
     return entries
 
