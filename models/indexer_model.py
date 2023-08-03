@@ -5,41 +5,17 @@ from numpy import arange, pi, sin, cos, arccos
 from torch.nn.functional import normalize
 import sys
 
-
 def batched_invert_matrix(A):
     """
-        Inverts a batch of 3x3 matrices and returns NaN if any matrix is not invertible.
-
-        Args:
-            matrix_batch (torch.Tensor): Input tensor of shape (n, 3, 3) representing n 3x3 matrices.
-
-        Returns:
-            torch.Tensor: Output tensor of shape (n, 3, 3) representing the inverted matrices with NaN for non-invertible ones.
-        """
+    Inverts a batch of 3x3 matrices and returns NaN if any matrix is not invertible.
+    @param A: matrix_batch (torch.Tensor): Input tensor of shape (n, 3, 3) representing n 3x3 matrices.
+    @return: torch.Tensor: Output tensor of shape (n, 3, 3) representing the inverted matrices with NaN for non-invertible ones.
+    """
     M = A.reshape(-1, 9)
-    a = M[:, 0]
-    b = M[:, 1]
-    c = M[:, 2]
-    d = M[:, 3]
-    e = M[:, 4]
-    f = M[:, 5]
-    g = M[:, 6]
-    h = M[:, 7]
-    i = M[:, 8]
-
+    a, b, c, d, e, f, g, h, i = [x.squeeze(-1) for x in torch.split(M, [1 for _ in range(9)], dim=-1)]
     coefficent = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
-
-    entries = []
-    entries.append(e * i - f * h)
-    entries.append(c * h - b * i)
-    entries.append(b * f - c * e)
-    entries.append(f * g - d * i)
-    entries.append(a * i - c * g)
-    entries.append(c * d - a * f)
-    entries.append(d * h - e * g)
-    entries.append(b * g - a * h)
-    entries.append(a * e - b * d)
-    entries = torch.stack(entries, dim=1)
+    entries = torch.stack([e * i - f * h, c * h - b * i, b * f - c * e, f * g - d * i,
+               a * i - c * g, c * d - a * f, d * h - e * g, b * g - a * h, a * e - b * d], dim=1)
     for k in range(9):
         entries[:, k] /= coefficent
     entries = entries.reshape(-1, 3, 3)
