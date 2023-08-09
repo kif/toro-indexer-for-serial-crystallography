@@ -5,21 +5,38 @@ from numpy import arange, pi, sin, cos, arccos
 from torch.nn.functional import normalize
 import sys
 
+
 def batched_invert_matrix(A):
     """
     Inverts a batch of 3x3 matrices and returns NaN if any matrix is not invertible.
-    @param A: matrix_batch (torch.Tensor): Input tensor of shape (n, 3, 3) representing n 3x3 matrices.
+    @param A: matrix_batch (torch.Tensor): Input tensor of shape (b, n, 3, 3) representing n 3x3 matrices.
     @return: torch.Tensor: Output tensor of shape (n, 3, 3) representing the inverted matrices with NaN for non-invertible ones.
     """
+
+    first, second = int(A.shape[0]), int(A.shape[1])
     M = A.reshape(-1, 9)
     a, b, c, d, e, f, g, h, i = [x.squeeze(-1) for x in torch.split(M, [1 for _ in range(9)], dim=-1)]
     coefficient = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
     entries = torch.stack([e * i - f * h, c * h - b * i, b * f - c * e, f * g - d * i,
-               a * i - c * g, c * d - a * f, d * h - e * g, b * g - a * h, a * e - b * d], dim=1)
+                           a * i - c * g, c * d - a * f, d * h - e * g, b * g - a * h, a * e - b * d], dim=1)
     for k in range(9):
         entries[:, k] /= coefficient
     entries = entries.reshape(-1, 3, 3)
-    return entries
+    return entries.unflatten(0, [first, second])
+
+
+def batched_regression(A, B):
+    """
+    Same as torch.linalg.lstsq but handles degenerate cases without an error. Solves least squares with min ||Ax - B||
+    @param A: Input
+    @param B: Targets
+    @return: The closed form solution of the least squares instance
+    """
+    X = A
+    XX = batched_invert_matrix(X.permute(0, 1, 3, 2) @ X)
+    XXX = XX @ X.permute(0, 1, 3, 2)
+    matrix = XXX @ B
+    return matrix
 
 
 def rotations(rodrigues_vector, alpha, angle_resolution: int):
@@ -55,27 +72,28 @@ def batched_compute_angles(bases):
     return torch.stack([alpha, beta, gamma], 1)
 
 
-def compute_penalization(matrix, initial_cell):
+def bcompute_penalization(matrix, initial_cell):
     """
     Computes de penalization used to skew the solutions to be as close as possible to the given ideal basis.
     @param matrix: The matrix to be tested
     @param initial_cell: the ideal basis
     @return: A penalization score that depends on how much matrix deviates from the structure of the initial_cell
     """
-    device = matrix.device
+    first, second = int(matrix.shape[0]), int(matrix.shape[1])
+    matrix, initial_cell = matrix.flatten(0, 1), initial_cell.flatten(0, 1)
     diff_cell = torch.abs(
-        matrix.norm(dim=-1, p=2) - initial_cell[:3].norm(dim=-1, p=2).to(device)
+        matrix.norm(dim=-1, p=2) - initial_cell[:3].norm(dim=-1, p=2).to(matrix.device)
     )
-    total_diff_cell = torch.max(diff_cell, dim=-1).values.to(device)
-    penalization = torch.max(torch.tensor(0).to(device), total_diff_cell) ** 3
+    total_diff_cell = torch.max(diff_cell, dim=-1).values.to(matrix.device)
+    penalization = torch.max(torch.tensor(0).to(matrix.device), total_diff_cell) ** 3
 
     # we also penalize according to angle discrepancies
     angles = batched_compute_angles(matrix)  # n x 3
     angles_diff = torch.abs(
-        angles - batched_compute_angles(initial_cell.unsqueeze(0))[0].to(device))
-    total_diff_angles = torch.max(angles_diff, dim=-1).values.to(device)
-    penalization += torch.max(torch.tensor(0).to(device), total_diff_angles) ** 3
-    return penalization
+        angles - batched_compute_angles(initial_cell.unsqueeze(0))[0].to(matrix.device))
+    total_diff_angles = torch.max(angles_diff, dim=-1).values.to(matrix.device)
+    penalization += torch.max(torch.tensor(0).to(matrix.device), total_diff_angles) ** 3
+    return penalization.unflatten(0, [first, second])
 
 
 def batched_subset_from_indices(input, indices):
@@ -152,34 +170,17 @@ def rotation_to_target(sources, targets):
     return R
 
 
-def bcompute_penalization(X, Y):
-    """
-    Batched version of compute_penalization
-    @param X: batched inputs
-    @param Y: batched inputs
-    @return: batched output
-    """
-    first = int(X.shape[0])
-    second = int(X.shape[1])
-    result = compute_penalization(X.flatten(0, 1), Y.flatten(0, 1))
-    return result.unflatten(0, [first, second])
-
-
-def bb_inverse(X):
-    """
-    Batched version of batched_invert_matrix
-    @param X: batched inputs
-    @return: batched output
-    """
-    first = int(X.shape[0])
-    second = int(X.shape[1])
-    result = batched_invert_matrix(X.flatten(0, 1))
-    return result.unflatten(0, [first, second])
-
-
 class IndexerModule(nn.Module):
     def __init__(self, lattice_size, num_iterations: int = 5, error_precision: float = 0.0015,
                  filter_precision: float = 0.00075, filter_min_num_spots: int = 6):
+        """
+        Creates an instance of the TORO indexer module
+        @param lattice_size: The number of samples from the unit sphere to be considered during the first phase of TORO
+        @param num_iterations: The number of error-annealing iterations to be used in the fitting
+        @param error_precision: The precision
+        @param filter_precision:
+        @param filter_min_num_spots:
+        """
         super(IndexerModule, self).__init__()
 
         self.unite_sphere_lattice = torch.nn.Parameter(create_sphere_lattice(num_points=lattice_size))
@@ -255,16 +256,16 @@ class IndexerModule(nn.Module):
 
             mask = torch.abs(h - projections) < d
 
-            flat_h = h.permute(1, 0, 2, 3).reshape(bs * 3 * all_candidates.shape[2], -1).unsqueeze(-1)
-            flat_mask = mask.permute(1, 0, 2, 3).reshape(bs * 3 * all_candidates.shape[2], -1)
+            flat_h = h.permute(1, 0, 2, 3).reshape(bs, 3 * all_candidates.shape[2], -1).unsqueeze(-1)
+            flat_mask = mask.permute(1, 0, 2, 3).reshape(bs, 3 * all_candidates.shape[2], -1)
             e_source = source.expand(3, all_candidates.shape[2], bs, -1, 3).permute(2, 0, 1, 3, 4).reshape(
-                bs * 3 * all_candidates.shape[2], -1, 3)
+                bs, 3 * all_candidates.shape[2], -1, 3)
 
             # Use a fitting but with a mask that takes only into account points closer to their target
-            refined_candidates = torch.linalg.lstsq(
-                e_source * flat_mask[:, :, None], flat_h * flat_mask[:, :, None]
-            )[0]  # solutions is flatten bs, 3, len(unite_lattice)
-            all_candidates = refined_candidates.unflatten(0, [bs, 3, -1]).squeeze(-1).transpose(0, 1)
+            refined_candidates = batched_regression(
+                e_source * flat_mask[:, :, :, None], flat_h * flat_mask[:, :, :, None]
+            )  # solutions is flatten bs, 3, len(unite_lattice)
+            all_candidates = refined_candidates.unflatten(1, [3, -1]).squeeze(-1).transpose(0, 1)
 
         # After TLS, we score anr rank the resulting vectors and take only the top num_top_solutions
         diff = torch.abs(projections - h)
@@ -456,7 +457,7 @@ class IndexerModule(nn.Module):
 
             self.solution_sources = solution_sources
             return solution_successes, solution_bases, solution_masks, torch.max(solution_errors,
-                                                                                   dim=-1).values, solution_penalization
+                                                                                 dim=-1).values, solution_penalization
 
     def index_candidate_solutions(
             self,
@@ -483,12 +484,12 @@ class IndexerModule(nn.Module):
             masked_source = source * source_mask[:, :, :, None]
             targets = torch.round(masked_source @ bases.transpose(2, 3))
             # The regression intrinsically ignores all zero vectors that have zero targets as their residual is zero
-            transposed_bases= torch.linalg.lstsq(masked_source, targets)[0]
+            transposed_bases = batched_regression(masked_source, targets)
             bases = transposed_bases.transpose(2, 3)
 
             # we compute now the inverse of the targets in reciprocal space which will be compared against source
             predictions = source @ transposed_bases
-            back_points = torch.round(predictions) @ bb_inverse(transposed_bases)
+            back_points = torch.round(predictions) @ batched_invert_matrix(transposed_bases)
 
             non_zero_mask = torch.sum(torch.abs(source), dim=-1) != 0
 
@@ -503,5 +504,4 @@ class IndexerModule(nn.Module):
             bases,
             initial_cell.repeat(int(len(bases)), 1, 1)
         )
-
         return source, bases, source_mask, error * source_mask, penalization

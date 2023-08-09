@@ -59,7 +59,7 @@ reciprocal_spots = torch.tensor([
 ])
 
 solution_successes, solution_bases, solution_indices, solution_errors, _ = im(
-    reciprocal_spots.unsqueeze(0),
+    reciprocal_spots.repeat(1, 1, 1),
     initial_cell,
     min_num_spots=8,
     angle_resolution=250,
