@@ -260,11 +260,10 @@ class IndexerModule(nn.Module):
             e_source = source.expand(3, all_candidates.shape[2], bs, -1, 3).permute(2, 0, 1, 3, 4).reshape(
                 bs, 3 * all_candidates.shape[2], -1, 3)
 
-            # Use a fitting but with a mask that takes only into account points closer to their target
+            # # Use a fitting but with a mask that takes only into account points closer to their target
             refined_candidates = batched_regression(
-                e_source * flat_mask[:, :, :, None], flat_h * flat_mask[:, :, :, None]
-            )  # solutions is flatten bs, 3, len(unite_lattice)
-            all_candidates = refined_candidates.unflatten(1, [3, -1]).squeeze(-1).transpose(0, 1)
+                e_source * flat_mask[:, :, None].unsqueeze(0), flat_h * flat_mask[:, :, None].unsqueeze(0)
+            ).squeeze(0)  # solutions is flatten bs, 3, len(unite_lattice)
 
         # After TLS, we score anr rank the resulting vectors and take only the top num_top_solutions
         diff = torch.abs(projections - h)
@@ -368,7 +367,7 @@ class IndexerModule(nn.Module):
                 self.unite_sphere_lattice.to(source.device),
                 initial_cell,
                 dist_to_integer=valid_integer_projection_radius,
-                num_top_solutions=num_top_solutions,
+                num_top_solutions=int(num_top_solutions // 2),
                 angle_resolution=angle_resolution
             )
 
