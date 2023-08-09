@@ -241,7 +241,7 @@ class IndexerModule(nn.Module):
 
         combined_loss = torch.sum(is_inlier, dim=-1)
 
-        indices = combined_loss.int().sort(descending=True, dim=-1).indices[:, :, 0: 50 * num_top_solutions].to(
+        indices = combined_loss.int().sort(descending=True, dim=-1).indices[:, :, 0: num_top_solutions].to(
             device)
 
         expanded_candidates = unit_candidates.unflatten(1, [3, -1]).permute(1, 0, 2, 3).flatten(0, 1)
@@ -253,7 +253,6 @@ class IndexerModule(nn.Module):
             projections = projections.unflatten(1, [3, -1]).permute(1, 0, 2, 3)
 
             h = torch.round(projections)
-
             mask = torch.abs(h - projections) < d
 
             flat_h = h.permute(1, 0, 2, 3).reshape(bs, 3 * all_candidates.shape[2], -1).unsqueeze(-1)

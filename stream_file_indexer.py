@@ -13,9 +13,13 @@ import lovely_tensors as lt
 
 lt.monkey_patch()
 
-streams_path = "data/lyso_12p4kev_1khz_150mm_run000026"
-prefix = "lyso_12p4kev_1khz_150mm_run000026"
-mylist = glob.glob(streams_path + '**/' + prefix + '*.stream', recursive=True)
+import os
+
+cwd = os.getcwd()
+
+# streams_path = cwd+"/data/lyso_12p4kev_1khz_150mm_run000026"
+streams_path = cwd+"/data/performance_test"
+mylist = glob.glob(streams_path + '/*.stream', recursive=True)
 print("List of stream files to be used", mylist)
 
 device = torch.device('cuda') if torch.cuda.is_available() else 'cpu'
@@ -32,7 +36,7 @@ im = IndexerModule(
 spot_sequence_length = 100
 batch_size = 20
 angle_resolution = 150
-num_top_solutions = 100
+num_top_solutions = 200
 
 for path in mylist:
     spot_sequence_length = spot_sequence_length
