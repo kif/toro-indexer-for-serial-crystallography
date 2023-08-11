@@ -26,20 +26,19 @@ device = torch.device('cuda') if torch.cuda.is_available() else 'cpu'
 print("Using device ", device)
 
 
-batch_size = 20
+batch_size = 40
+spot_sequence_length = 80
 
 # performing params
-lattice_size=50000
-spot_sequence_length = 100
+lattice_size = 50000
 angle_resolution = 150
 num_top_solutions = 400
 
 
-# fast params
-lattice_size=10000
-spot_sequence_length = 80
-angle_resolution = 150
-num_top_solutions = 150
+# # fast params
+# lattice_size = 30000
+# angle_resolution = 150
+# num_top_solutions = 200
 
 
 im = IndexerModule(
