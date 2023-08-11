@@ -332,10 +332,10 @@ class IndexerModule(nn.Module):
         """
 
         non_zero_mask = torch.sum(source ** 2, dim=-1) != 0
-
         predictions = torch.bmm(source, base.transpose(1, 2))
         hkl = torch.round(predictions)
-        back_points = torch.bmm(hkl, torch.inverse(base).transpose(1, 2))
+        back_points = torch.bmm(hkl, batched_invert_matrix(base.unsqueeze(0)).squeeze(0).transpose(1, 2))
+
         errors = (source - back_points).norm(dim=-1, p=2)
         mask = errors < precision
 
