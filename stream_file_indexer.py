@@ -25,18 +25,32 @@ print("List of stream files to be used", mylist)
 device = torch.device('cuda') if torch.cuda.is_available() else 'cpu'
 print("Using device ", device)
 
+
+batch_size = 20
+
+# performing params
+lattice_size=50000
+spot_sequence_length = 100
+angle_resolution = 150
+num_top_solutions = 400
+
+
+# fast params
+lattice_size=10000
+spot_sequence_length = 80
+angle_resolution = 150
+num_top_solutions = 150
+
+
 im = IndexerModule(
-    lattice_size=50000,
+    lattice_size=lattice_size,
     num_iterations=5,
     error_precision=0.0012,
     filter_precision=0.00075,
     filter_min_num_spots=6
 )
 
-spot_sequence_length = 100
-batch_size = 20
-angle_resolution = 150
-num_top_solutions = 200
+
 
 for path in mylist:
     spot_sequence_length = spot_sequence_length
