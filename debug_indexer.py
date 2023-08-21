@@ -1,11 +1,11 @@
-from models.indexer_model import IndexerModule
+from models.indexer_model import ToroIndexer
 import torch
 
 import lovely_tensors as lt
 
 lt.monkey_patch()
 
-im = IndexerModule(
+im = ToroIndexer(
     lattice_size=50000,
     num_iterations=5,
     error_precision=0.0012,

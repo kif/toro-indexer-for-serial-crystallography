@@ -7,7 +7,7 @@ import numpy as np
 
 from tqdm import tqdm
 from torch.utils.data import DataLoader, Subset
-from models.indexer_model import IndexerModule
+from models.indexer_model import ToroIndexer
 
 import lovely_tensors as lt
 
@@ -36,12 +36,12 @@ num_top_solutions = 400
 
 
 # # fast params
-# lattice_size = 30000
-# angle_resolution = 150
+# lattice_size = 50000
+# angle_resolution = 200
 # num_top_solutions = 200
 
 
-im = IndexerModule(
+im = ToroIndexer(
     lattice_size=lattice_size,
     num_iterations=5,
     error_precision=0.0012,

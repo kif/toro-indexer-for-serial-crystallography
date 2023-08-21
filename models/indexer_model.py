@@ -170,7 +170,7 @@ def rotation_to_target(sources, targets):
     return R
 
 
-class IndexerModule(nn.Module):
+class ToroIndexer(nn.Module):
     def __init__(self, lattice_size, num_iterations: int = 5, error_precision: float = 0.0015,
                  filter_precision: float = 0.00075, filter_min_num_spots: int = 6):
         """
@@ -181,7 +181,7 @@ class IndexerModule(nn.Module):
         @param filter_precision:
         @param filter_min_num_spots:
         """
-        super(IndexerModule, self).__init__()
+        super(ToroIndexer, self).__init__()
 
         self.unite_sphere_lattice = torch.nn.Parameter(create_sphere_lattice(num_points=lattice_size))
         self.filter_precision = float(filter_precision)
@@ -343,10 +343,10 @@ class IndexerModule(nn.Module):
 
         return torch.sum(mask, dim=-1) >= min_num_spots
 
-    def forward(self, source, initial_cell, min_num_spots: int, angle_resolution: int, num_top_solutions: int):
+    def forward(self, peaks, initial_cell, min_num_spots: int, angle_resolution: int, num_top_solutions: int):
         """
         Indexes a batched instance
-        @param source: bacthed 3D Points on the Ewald sphere bs, num_points, 3
+        @param peaks: bacthed 3D Points on the Ewald sphere bs, num_points, 3
         @param initial_cell: The given lattice cell in primal space 3,3
         @param min_num_spots: the minimum number of spots that a valid solution most have
         @param angle_resolution: The number of samples used to rotate the given bases
@@ -361,11 +361,11 @@ class IndexerModule(nn.Module):
             # fixed hyperparameter
             valid_integer_projection_radius = float(0.2)
 
-            bs = int(len(source))
+            bs = int(len(peaks))
 
             candidate_bases = self.sample_bases(
-                source,
-                self.unite_sphere_lattice.to(source.device),
+                peaks,
+                self.unite_sphere_lattice.to(peaks.device),
                 initial_cell,
                 dist_to_integer=valid_integer_projection_radius,
                 num_top_solutions=int(num_top_solutions // 2),
@@ -376,7 +376,7 @@ class IndexerModule(nn.Module):
                 self.raw_bases = candidate_bases.clone().detach()
 
             scores, _, is_inlier = self.compute_scores_and_hkl(
-                source,
+                peaks,
                 candidate_bases,
                 dist_to_integer=valid_integer_projection_radius
             )
@@ -391,12 +391,13 @@ class IndexerModule(nn.Module):
 
             # We update the is_inlier mask with the same indices
             is_inlier = batched_subset_from_indices(is_inlier, indices)
-            non_zero_mask = torch.sum(torch.abs(source), dim=-1) != 0
+            non_zero_mask = torch.sum(torch.abs(peaks), dim=-1) != 0
             is_inlier &= non_zero_mask.repeat(is_inlier.shape[1], 1, 1).transpose(0, 1)
 
-            tuned_sources, top_bases, source_mask, error, penalization = self.index_candidate_solutions(
+            repeated_peaks = peaks.repeat(num_top_solutions, 1, 1, 1).transpose(0, 1)
+            top_bases, source_mask, error, penalization = self.index_candidate_solutions(
                 candidate_bases,
-                source.repeat(num_top_solutions, 1, 1, 1).transpose(0, 1),
+                repeated_peaks,
                 is_inlier,
                 initial_cell,
                 num_iterations=self.num_iterations
@@ -427,7 +428,7 @@ class IndexerModule(nn.Module):
                 solution_masks.append(
                     batched_subset_from_indices(source_mask, solution_instance.unsqueeze(1)).squeeze(1))
                 solution_sources.append(
-                    batched_subset_from_indices(tuned_sources, solution_instance.unsqueeze(1)).squeeze(1))
+                    batched_subset_from_indices(repeated_peaks, solution_instance.unsqueeze(1)).squeeze(1))
                 solution_errors.append(batched_subset_from_indices(error, solution_instance.unsqueeze(1)).squeeze(1))
                 solution_penalization.append(
                     batched_subset_from_indices(penalization, solution_instance.unsqueeze(1)).squeeze(1))
@@ -445,7 +446,7 @@ class IndexerModule(nn.Module):
             solution_penalization = torch.stack(solution_penalization, 1)
             solution_sources = torch.stack(solution_sources, 1)
 
-            source_for_filtering = source.repeat(int(solution_bases.shape[1]), 1, 1, 1).transpose(0, 1)
+            source_for_filtering = peaks.repeat(int(solution_bases.shape[1]), 1, 1, 1).transpose(0, 1)
 
             solution_successes = self.bfilter_solution(
                 solution_bases.flatten(0, 1),
@@ -461,14 +462,14 @@ class IndexerModule(nn.Module):
     def index_candidate_solutions(
             self,
             bases,
-            source,
+            peaks,
             source_mask,
             initial_cell,
             num_iterations: int
     ):
         """
         @param bases: candidate basis solutions
-        @param source: Points on the Ewald sphere in reciprocal space to index
+        @param peaks: Points on the Ewald sphere in reciprocal space to index
         @param source_mask: A 0-1-mask of the source points indicating which are active
         @param initial_cell: The given cell defining the reciprocal lattice
         @param num_iterations: The num of iterations to run the algorithm
@@ -480,20 +481,20 @@ class IndexerModule(nn.Module):
         error = torch.zeros_like(source_mask)
         for round in range(num_iterations):
             # We turn to zeros the locations that should not be considered for fitting
-            masked_source = source * source_mask[:, :, :, None]
+            masked_source = peaks * source_mask[:, :, :, None]
             targets = torch.round(masked_source @ bases.transpose(2, 3))
             # The regression intrinsically ignores all zero vectors that have zero targets as their residual is zero
             transposed_bases = batched_regression(masked_source, targets)
             bases = transposed_bases.transpose(2, 3)
 
             # we compute now the inverse of the targets in reciprocal space which will be compared against source
-            predictions = source @ transposed_bases
+            predictions = peaks @ transposed_bases
             back_points = torch.round(predictions) @ batched_invert_matrix(transposed_bases)
 
-            non_zero_mask = torch.sum(torch.abs(source), dim=-1) != 0
+            non_zero_mask = torch.sum(torch.abs(peaks), dim=-1) != 0
 
             # we compute now the new error
-            error = torch.norm(source - back_points, dim=-1)
+            error = torch.norm(peaks - back_points, dim=-1)
 
             source_mask = error < error_bounds[round]
             source_mask &= non_zero_mask
@@ -503,4 +504,4 @@ class IndexerModule(nn.Module):
             bases,
             initial_cell.repeat(int(len(bases)), 1, 1)
         )
-        return source, bases, source_mask, error * source_mask, penalization
+        return bases, source_mask, error * source_mask, penalization
