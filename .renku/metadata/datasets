@@ -15,7 +15,7 @@
                   "lyso_12p4kev_1khz_150mm_run000026",
                   {
                     "@renku_data_type": "renku.domain_model.dataset.Dataset",
-                    "@renku_oid": "83bd1c551ca080bc9c35f3159615364b24f0e19ad0ba8dfff859c7dd7637a25d",
+                    "@renku_oid": "53fe742cfd33e105f1b184b57ce6fb2f41a6b9b05ca29c10d742c9bd1dc33438",
                     "@renku_reference": true
                   }
                 ]
