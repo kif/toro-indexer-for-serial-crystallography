@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import math
-from numpy import arange, pi, sin, cos, arccos
 from torch.nn.functional import normalize
 import sys
 
@@ -47,14 +46,15 @@ def rotations(rodrigues_vector, alpha, angle_resolution: int):
     @param angle_resolution: The number of samples to be generated.
     @return: A tensor of bs, angle_resolution, 3, 3 containing bs * angle resolution rotation matrices, each rotating the corresponding alpha degrees given
     """
+    dtype = rodrigues_vector.dtype
     ip = normalize(rodrigues_vector)
     new_ip = ip.flip(1)
     new_ip[:, 1] *= -1
-    A = to_skew_symmetric(new_ip).permute(0, 2, 1).to(ip.device)
+    A = to_skew_symmetric(new_ip).permute(0, 2, 1).to(ip.device, dtype=dtype)
     AA = torch.bmm(A, A)
-    first = torch.diag(torch.ones(3)).to(ip.device)
-    second = A.repeat(angle_resolution, 1, 1, 1) * torch.sin(alpha)[:, None, None, None]
-    third = AA.repeat(angle_resolution, 1, 1, 1) * (1 - torch.cos(alpha))[:, None, None, None]
+    first = torch.diag(torch.ones(3, dtype=dtype, device=ip.device))
+    second = A.repeat(angle_resolution, 1, 1, 1) * torch.sin(alpha).to(dtype=dtype)[:, None, None, None]
+    third = AA.repeat(angle_resolution, 1, 1, 1) * (1 - torch.cos(alpha).to(dtype=dtype))[:, None, None, None]
     R = first.expand(second.shape) + second + third
     return R.permute(1, 0, 2, 3)
 
@@ -65,7 +65,7 @@ def batched_compute_angles(bases):
     @param bases: A tensor of shape bs, 3, 3 with bs bases
     @return: The angles alpha, beta and gamma between the consecutive vectors.
     """
-    bases = torch.nn.functional.normalize(bases, dim=-1)
+    bases = normalize(bases, dim=-1)
     alpha = torch.acos(torch.sum(bases[:, 0] * bases[:, 1], dim=-1)) * 180 / math.pi
     beta = torch.acos(torch.sum(bases[:, 0] * bases[:, 2], dim=-1)) * 180 / math.pi
     gamma = torch.acos(torch.sum(bases[:, 1] * bases[:, 2], dim=-1)) * 180 / math.pi
@@ -79,20 +79,21 @@ def bcompute_penalization(matrix, initial_cell):
     @param initial_cell: the ideal basis
     @return: A penalization score that depends on how much matrix deviates from the structure of the initial_cell
     """
+    dtype = matrix.dtype
     first, second = int(matrix.shape[0]), int(matrix.shape[1])
     matrix, initial_cell = matrix.flatten(0, 1), initial_cell.flatten(0, 1)
     diff_cell = torch.abs(
         matrix.norm(dim=-1, p=2) - initial_cell[:3].norm(dim=-1, p=2).to(matrix.device)
     )
-    total_diff_cell = torch.max(diff_cell, dim=-1).values.to(matrix.device)
-    penalization = torch.max(torch.tensor(0).to(matrix.device), total_diff_cell) ** 3
+    total_diff_cell = torch.max(diff_cell, dim=-1).values.to(matrix.device, dtype=dtype)
+    penalization = torch.max(torch.tensor(0, dtype=dtype, device=matrix.device), total_diff_cell) ** 3
 
     # we also penalize according to angle discrepancies
     angles = batched_compute_angles(matrix)  # n x 3
     angles_diff = torch.abs(
-        angles - batched_compute_angles(initial_cell.unsqueeze(0))[0].to(matrix.device))
-    total_diff_angles = torch.max(angles_diff, dim=-1).values.to(matrix.device)
-    penalization += torch.max(torch.tensor(0).to(matrix.device), total_diff_angles) ** 3
+        angles - batched_compute_angles(initial_cell.unsqueeze(0))[0].to(matrix.device, dtype=dtype))
+    total_diff_angles = torch.max(angles_diff, dim=-1).values.to(matrix.device, dtype=dtype)
+    penalization += torch.max(torch.tensor(0, dtype=dtype, device=matrix.device), total_diff_angles) ** 3
     return penalization.unflatten(0, [first, second])
 
 
@@ -119,14 +120,14 @@ def create_sphere_lattice(num_points: int = 1000000):
     @return: A collection of sampled vectors.
     """
     goldenRatio = (1 + 5 ** 0.5) / 2
-    i = arange(0, num_points)
-    theta = 2 * pi * i / goldenRatio
-    phi = arccos(1 - 2 * (i + 0.5) / num_points)
-    x, y, z = cos(theta) * sin(phi), sin(theta) * sin(phi), cos(phi);
+    i = torch.arange(num_points)
+    theta = 2 * torch.pi * i / goldenRatio
+    phi = torch.arccos(1 - 2 * (i + 0.5) / num_points)
+    x, y, z = torch.cos(theta) * torch.sin(phi), torch.sin(theta) * torch.sin(phi), torch.cos(phi)
     lattice = torch.randn(num_points, 3)
-    lattice[:, 0] = torch.FloatTensor(x)
-    lattice[:, 1] = torch.FloatTensor(y)
-    lattice[:, 2] = torch.FloatTensor(z)
+    lattice[:, 0] = x
+    lattice[:, 1] = y
+    lattice[:, 2] = z
     return lattice[lattice[:, -1] >= 0]
 
 
@@ -136,7 +137,7 @@ def to_skew_symmetric(x):
     @param x: The input vector
     @return: The tensor bs, 3, 3 with the skew symmetric matrices corresponding to x
     """
-    out = torch.zeros(x.shape[0], 3, 3).to(x.device)
+    out = torch.zeros(x.shape[0], 3, 3, device=x.device, dtype=x.dtype)
     out[:, 0, 1] = x[:, 0]
     out[:, 0, 2] = x[:, 1]
     out[:, 1, 0] = -x[:, 0]
@@ -156,8 +157,8 @@ def rotation_to_target(sources, targets):
     """
     sources = normalize(sources, dim=-1)
     targets = normalize(targets, dim=-1)
-    V = torch.cross(sources, targets)
-    SV = torch.zeros_like(V).to(sources.device)
+    V = torch.cross(sources, targets).to(sources.device, dtype=sources.dtype)
+    SV = torch.zeros_like(V, device=sources.device, dtype=sources.dtype)
     SV[:, 0] = -V[:, 2]
     SV[:, 1] = V[:, 1]
     SV[:, 2] = -V[:, 0]
@@ -165,7 +166,7 @@ def rotation_to_target(sources, targets):
     C = torch.diag(torch.mm(sources, targets.T))
     SS = to_skew_symmetric(SV)
     SS2 = torch.bmm(SS, SS)
-    I = torch.stack(sources.shape[0] * [torch.diag(torch.ones(3))], 0).to(sources.device)
+    I = torch.stack(sources.shape[0] * [torch.diag(torch.ones(3, device=sources.device, dtype=sources.dtype))], 0)
     R = I + SS + ((1 - C) / S ** 2)[:, None, None] * SS2
     return R
 
@@ -182,20 +183,19 @@ class ToroIndexer(nn.Module):
         @param filter_min_num_spots:
         """
         super(ToroIndexer, self).__init__()
-
-        self.unite_sphere_lattice = torch.nn.Parameter(create_sphere_lattice(num_points=lattice_size))
+        self.type = torch.float32
+        self.register_buffer('unite_sphere_lattice', create_sphere_lattice(num_points=lattice_size))
         self.filter_precision = float(filter_precision)
         self.filter_min_num_spots = int(filter_min_num_spots)
         self.error_precision = float(error_precision)
         self.num_iterations = int(num_iterations)
-        self.solution_sources = torch.zeros(0)
+
         gettrace = getattr(sys, 'gettrace', None)
         self.debugging = gettrace is not None
 
     def sample_bases(
             self,
             source,
-            unite_sphere_lattice,
             initial_cell: torch.Tensor,
             dist_to_integer: float = 0.2,
             num_top_solutions: int = 1000,
@@ -218,10 +218,11 @@ class ToroIndexer(nn.Module):
 
         device = source.device
         bs = int(source.shape[0])
-        scaling = initial_cell.norm(dim=-1, p=2).to(device)
-
+        scaling = initial_cell.norm(dim=-1, p=2).to(device, dtype=self.type)
+        self.unite_sphere_lattice = self.unite_sphere_lattice.to(device)
+        initial_cell = initial_cell.to(device)
         # We obtain the dot product of the sampled vectors on the unit sphere and our reciprocal peaks in source once
-        unit_projections = unite_sphere_lattice @ source.flatten(0, 1).T
+        unit_projections = self.unite_sphere_lattice @ source.flatten(0, 1).T
         unit_projections = unit_projections.unflatten(1, [bs, -1]).permute(1, 0, 2)
 
         # We use the information of the dot products with the unit
@@ -231,7 +232,7 @@ class ToroIndexer(nn.Module):
 
         # We explicitly create the candidates from the unit sphere mapping by triplicating it
         # and then scaling it accordingly
-        unit_candidates = unite_sphere_lattice.expand(bs, 3, len(unite_sphere_lattice), 3)
+        unit_candidates = self.unite_sphere_lattice.expand(bs, 3, len(self.unite_sphere_lattice), 3)
         unit_candidates = unit_candidates * scaling[None, :, None, None]
         unit_candidates = unit_candidates.flatten(1, 2)
 
@@ -241,8 +242,7 @@ class ToroIndexer(nn.Module):
 
         combined_loss = torch.sum(is_inlier, dim=-1)
 
-        indices = combined_loss.int().sort(descending=True, dim=-1).indices[:, :, 0: num_top_solutions].to(
-            device)
+        indices = combined_loss.int().sort(descending=True, dim=-1).indices[:, :, 0: num_top_solutions].to(device)
 
         expanded_candidates = unit_candidates.unflatten(1, [3, -1]).permute(1, 0, 2, 3).flatten(0, 1)
         all_candidates = batched_subset_from_indices(expanded_candidates, indices.flatten(0, 1)).unflatten(0, [3, -1])
@@ -270,7 +270,7 @@ class ToroIndexer(nn.Module):
         diff = torch.abs(projections - h)
         is_inlier = diff <= 0.01
         is_inlier &= (torch.sum(torch.abs(source), dim=-1) != 0)[None, :, None, :]
-        combined_loss = torch.sum(is_inlier, dim=-1)
+        combined_loss = torch.sum(is_inlier.int(), dim=-1, dtype=torch.int)
         indices = combined_loss.int().sort(descending=True, dim=-1).indices[:, :, 0:num_top_solutions].to(
             device)
         expanded_candidates = all_candidates.flatten(0, 1)
@@ -286,7 +286,7 @@ class ToroIndexer(nn.Module):
             permutation = [i, (i + 1) % 3, (i + 2) % 3]
             inverse_permutation = [(i + i) % 3, (i + 1 + i) % 3, (i + 2 + i) % 3]
             current_cell = initial_cell[permutation, :]
-            all_basis = current_cell.repeat(candidates.shape[0], candidates.shape[1], 1, 1).to(device)
+            all_basis = current_cell.repeat(candidates.shape[0], candidates.shape[1], 1, 1).to(device, dtype=self.type)
 
             R = rotation_to_target(all_basis[:, :, 0].flatten(0, 1), candidates.flatten(0, 1))
             bases = torch.bmm(R, all_basis.flatten(0, 1).transpose(1, 2)).permute(0, 2, 1)
@@ -297,8 +297,9 @@ class ToroIndexer(nn.Module):
                  bases[:, 2, :]], 1
             )
 
-            alpha = 2 * math.pi * torch.arange(angle_resolution) / angle_resolution
-            R = rotations(candidates.flatten(0, 1), alpha.to(device), angle_resolution)
+            alpha = 2 * math.pi * torch.arange(angle_resolution, dtype=torch.int) / angle_resolution
+            alpha = alpha.to(device, dtype=self.type)
+            R = rotations(candidates.flatten(0, 1), alpha, angle_resolution)
 
             bts = bases.transpose(1, 2).repeat(angle_resolution, 1, 1, 1).transpose(0, 1)
             M = torch.bmm(R.reshape(-1, 3, 3), bts.reshape(-1, 3, 3)).permute(0, 2, 1)
@@ -357,6 +358,7 @@ class ToroIndexer(nn.Module):
         solution_errors (float tensor with the error of the solutions bs x num_crystals) ,
         solution_penalization (float tensor with the penalization used in the solutions bs x num_crystals)
         """
+        self.type = next(self.buffers()).dtype
         with torch.no_grad():
             # fixed hyperparameter
             valid_integer_projection_radius = float(0.2)
@@ -365,7 +367,6 @@ class ToroIndexer(nn.Module):
 
             candidate_bases = self.sample_bases(
                 peaks,
-                self.unite_sphere_lattice.to(peaks.device),
                 initial_cell,
                 dist_to_integer=valid_integer_projection_radius,
                 num_top_solutions=int(num_top_solutions // 2),
@@ -478,7 +479,7 @@ class ToroIndexer(nn.Module):
         start = 0.01
         base = 2 ** (math.log(self.error_precision * 100) / ((num_iterations - 1) * math.log(2)))
         error_bounds = [float(start * base ** i) for i in range(num_iterations)]  # min error is 0.002
-        error = torch.zeros_like(source_mask)
+        error = torch.zeros_like(source_mask, dtype=self.type)
         for round in range(num_iterations):
             # We turn to zeros the locations that should not be considered for fitting
             masked_source = peaks * source_mask[:, :, :, None]
