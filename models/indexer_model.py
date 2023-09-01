@@ -18,8 +18,7 @@ def batched_invert_matrix(A):
     coefficient = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
     entries = torch.stack([e * i - f * h, c * h - b * i, b * f - c * e, f * g - d * i,
                            a * i - c * g, c * d - a * f, d * h - e * g, b * g - a * h, a * e - b * d], dim=1)
-    for k in range(9):
-        entries[:, k] /= coefficient
+    entries /= coefficient[:, None]
     entries = entries.reshape(-1, 3, 3)
     return entries.unflatten(0, [first, second])
 
@@ -230,11 +229,17 @@ class ToroIndexer(nn.Module):
         projections = torch.stack([unit_projections * factor for factor in scaling], 0)
         h = torch.round(projections)
 
+        if self.debugging:
+            self.projections = projections.clone()
+
         # We explicitly create the candidates from the unit sphere mapping by triplicating it
         # and then scaling it accordingly
         unit_candidates = self.unite_sphere_lattice.expand(bs, 3, len(self.unite_sphere_lattice), 3)
         unit_candidates = unit_candidates * scaling[None, :, None, None]
         unit_candidates = unit_candidates.flatten(1, 2)
+
+        if self.debugging:
+            self.unit_candidates = unit_candidates.clone()
 
         diff = torch.abs(projections - h)
         is_inlier = diff <= dist_to_integer
@@ -245,7 +250,11 @@ class ToroIndexer(nn.Module):
         indices = combined_loss.int().sort(descending=True, dim=-1).indices[:, :, 0: num_top_solutions].to(device)
 
         expanded_candidates = unit_candidates.unflatten(1, [3, -1]).permute(1, 0, 2, 3).flatten(0, 1)
+        self.expanded_candidates = expanded_candidates.clone()
         all_candidates = batched_subset_from_indices(expanded_candidates, indices.flatten(0, 1)).unflatten(0, [3, -1])
+
+        if self.debugging:
+            self.all_candidates_prior = all_candidates.clone()
 
         # We perform a Trimmed Least Squares method with error threshold annealing to find the best vectors
         for d in [0.1, 0.05, 0.025, 0.01]:
@@ -265,6 +274,9 @@ class ToroIndexer(nn.Module):
                 e_source * flat_mask[:, :, :, None], flat_h * flat_mask[:, :, :, None]
             )  # solutions is flatten bs, 3, len(unite_lattice)
             all_candidates = refined_candidates.unflatten(1, [3, -1]).squeeze(-1).transpose(0, 1)
+
+        if self.debugging:
+            self.all_candidates_post = all_candidates.clone()
 
         # After TLS, we score anr rank the resulting vectors and take only the top num_top_solutions
         diff = torch.abs(projections - h)

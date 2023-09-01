@@ -1,6 +1,54 @@
 import numpy as np
 import torch
 import math
+import matplotlib.pyplot as plt
+
+def print_solution(best_triple, idx, mds, initial_cell):
+    with torch.no_grad():
+        wlen = mds.instances[idx]["wavelength"]
+        factor = 0.0005
+        predicted_spots = predictBraggsReflections(
+            torch.inverse(best_triple.T).to('cpu'),
+            vwlen=wlen,
+            maxhkl=max(initial_cell.norm(dim=-1)) // 2,
+            detector_distance_m=mds.instances[idx]["det_dist"] / 1000,
+            detectorCenter=[mds.instances[idx]["orgx"], mds.instances[idx]["orgy"]],
+            pixelLength_m=75e-6,
+            nx=mds.instances[idx]["nx"], ny=mds.instances[idx]["ny"],
+            eps=factor, fromXgandalf=True
+        )
+
+        if 'reciprocal_cell_matrix' in mds.instances[idx]:
+            predicted_xgandalf = predictBraggsReflections(
+                torch.FloatTensor(mds.instances[idx]['reciprocal_cell_matrix']) / 10,
+                vwlen=wlen,
+                maxhkl=max(initial_cell.norm(dim=-1)) // 2,
+                detector_distance_m=mds.instances[idx]["det_dist"] / 1000,
+                detectorCenter=[mds.instances[idx]["orgx"], mds.instances[idx]["orgy"]],
+                pixelLength_m=75e-6,
+                nx=mds.instances[idx]["nx"], ny=mds.instances[idx]["ny"],
+                eps=factor,
+
+            )
+
+    labeled_peaks = mds.instances[idx]['peaks'][:, :2]
+    plt.figure(figsize=(14, 14))
+    plt.title(
+        "Indexed diffraction pattern. Spots are depicted in blue, the predicted reflections from the indexing are shown in magenta. \n In green is the predicted reflections found by Xgandalf in case it is in the stream file.")
+    plt.scatter(
+        mds.instances[idx]['orgx'] - 1 * (labeled_peaks[:, 0] - mds.instances[idx]['orgx']),
+        labeled_peaks[:, 1], s=10, facecolors='b', edgecolors='none')
+
+    if 'predicted_reflections' in mds.instances[idx]:
+        predicted = mds.instances[idx]['predicted_reflections'][:, :2]
+        plt.scatter(predicted_xgandalf[:, 0], predicted_xgandalf[:, 1], s=50, facecolors='none', edgecolors='g')
+        plt.scatter(mds.instances[idx]['orgx'] - 1 * (predicted[:, 0] - mds.instances[idx]['orgx']), predicted[:, 1],
+                    s=140, facecolors='none', edgecolors='k')
+
+    plt.scatter(predicted_spots[:, 0], predicted_spots[:, 1], s=60, facecolors='none', edgecolors='m')
+
+    plt.show()
+
 
 def rodrigues(h, phi, rot_ax):
     import numpy as np
@@ -126,3 +174,96 @@ def get_ideal_basis(cell_parameters):
     ])
     basis = torch.stack([v_a, v_b, v_c], 0)
     return basis.float()
+
+def predictBraggsReflections(reciprocal_basis_vectors,
+                             vwlen=0.9998725806451613,
+                             maxhkl=30,
+                             detector_distance_m=0.200,
+                             detectorCenter=[1122.215602, 1170.680571],
+                             pixelLength_m=75e-6,
+                             nx=2068, ny=2164,
+                             eps=4e-4,
+                             device='cpu',
+                             fromXgandalf: bool = False):
+    """ Given a rotation matrix in the reciprocal space, predict the ideal Bragg's reflections
+    Args:
+        reciprocal_basis_vectors (torch.tensor): reciprocal basis vectors (a*, b*, c*)
+        vwlen (float, optional): beam's wavelenght. Defaults to 0.9998725806451613.
+        maxhkl (int, optional): max integer for h, k, l numbers. Defaults to 30.
+        detector_distance_m (float, optional): Detector distance in m. Defaults to 0.200.
+        detectorCenter (list, optional): Beam's center in pixels. Defaults to [1122.215602,1170.680571].
+        pixelLength_m (float, optional): Pixels size in m. Defaults to 75e-6.
+        nx (int, optional): Detector size (x direction). Defaults to 2068.
+        ny (int, optional): Detector size (y direction). Defaults to 2164.
+        eps (float, optional): Tolerance (correlates with the non-monocromaticity). Defaults to 3e-4.
+        device (str, optional): Torch device. Defaults to 'cpu'.
+    Returns:
+        _type_: _description_
+    """
+    #  for now this will stay hard-coded
+    beam_direction = [0, 0, 1 / vwlen]
+    # generate the millers grid
+    rh = torch.arange(-maxhkl, maxhkl + 1, dtype=torch.int16, device=device)
+    rk = torch.arange(-maxhkl, maxhkl + 1, dtype=torch.int16, device=device)
+    rl = torch.arange(-maxhkl, maxhkl + 1, dtype=torch.int16, device=device)
+    millers = torch.stack([
+        rh.repeat_interleave(len(rk) * len(rl)),
+        rk.repeat(len(rh)).repeat_interleave(len(rl)),
+        rl.repeat(len(rh) * len(rk)),
+    ]).T
+    # generate the reciprocal lattice vectors
+    reciprocalPeaks = millers.float() @ reciprocal_basis_vectors
+    # center on the Ewald sphere
+    reciprocalPeaks += torch.tensor(beam_direction)
+    # threshold
+    cond = torch.abs(torch.norm(reciprocalPeaks, dim=1) - (1 / vwlen)) < eps
+    reciprocalPeaks = reciprocalPeaks[cond]
+    reciprocalPeaks += torch.tensor(beam_direction)
+    # reflect the x-axis
+    # rotation matrix
+    if fromXgandalf:
+        rt = torch.tensor([
+            [-1, 0, 0],
+            [0, 1, 0],
+            [0, 0, 1]], dtype=torch.double)
+        reciprocalPeaks = reciprocalPeaks @ rt.float()
+    return project_to_detector(vwlen, reciprocalPeaks, detector_distance_m, detectorCenter, pixelLength_m, nx, ny)
+
+
+def project_to_detector(
+        vwlen,
+        reciprocalPeaks,
+        detector_distance_m,
+        detectorCenter,
+        pixelLength_m,
+        nx,
+        ny,
+        prune_in_frame=True
+):
+    """ Given points in reciprocal space on the Ewald sphere, it projects them down to the detector
+        Args:
+            vwlen (float, optional): beam's wavelenght. Defaults to 0.9998725806451613.
+            reciprocalPeaks (torch.tensor): points in reciprocal space
+            detector_distance_m (float, optional): Detector distance in m. Defaults to 0.200.
+            detectorCenter (list, optional): Beam's center in pixels. Defaults to [1122.215602,1170.680571].
+            pixelLength_m (float, optional): Pixels size in m. Defaults to 75e-6.
+            nx (int, optional): Detector size (x direction). Defaults to 2068.
+            ny (int, optional): Detector size (y direction). Defaults to 2164.
+        Returns:
+            _type_: _description_
+        """
+    reciprocalPeaks = reciprocalPeaks.clone()
+    beam_direction = [0, 0, 1 / vwlen]
+    reciprocalPeaks *= torch.tensor([-1, 1, 1])
+    detectorCenter = [detectorCenter[1], detectorCenter[0]]
+    # recenter the points
+    # reciprocalPeaks += 2 * torch.tensor([beam_direction])
+    # flip
+    projectedPeaks = reciprocalPeaks[:, [1, 0]] / (reciprocalPeaks[:, -1:] - (1 / vwlen)) * detector_distance_m
+    # center and flip x and y
+    projectedPeaks = (projectedPeaks / pixelLength_m + torch.tensor(detectorCenter, device=reciprocalPeaks.device))[:,
+                     [1, 0]]
+    # limit the points inside the detector panel
+    mask = (projectedPeaks[:, 0] > 0) & (projectedPeaks[:, 0] < nx) & (projectedPeaks[:, 1] > 0) & (
+            projectedPeaks[:, 1] < ny)
+    return projectedPeaks[mask]

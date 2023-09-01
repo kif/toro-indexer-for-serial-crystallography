@@ -274,33 +274,16 @@ class RawStreamDS(torch.utils.data.Dataset):
 
             joined = [lattice_points, rp_sp3D]
             x = torch.cat(joined, 0)
-            if 'labels' in frame.keys():
-                grid = torch.FloatTensor(frame['labels'])
-            else:
-                grid = torch.FloatTensor(x[:, :3] * 0)
-
-            y = (torch.sum(torch.abs(grid), dim=-1) != 0).long()
-
-            if num_random > 0:
-                grid_random = rp_sp3D[:, :3] * 0
-                y_random = rp_sp3D[:, 0] * 0
-                y = torch.cat([y, y_random], 0)
-                grid = torch.cat([grid, grid_random], 0)
 
             if self.spot_sorting:
                 sorting = x.norm(dim=-1).sort(descending=False).indices[:self.sequence_length]
                 x = x[sorting]
-                y = y[sorting]
-                grid = grid[sorting]
             else:
                 x = x[:self.sequence_length]
-                y = y[:self.sequence_length]
-                grid = grid[:self.sequence_length]
-            assert len(x) == len(y)
 
             x = x[:, :3]
 
-            return x, y, grid, idx
+            return x, idx
 
     def get_idx_from_serial(self, serial_number):
         return serial_number
