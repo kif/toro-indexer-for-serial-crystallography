@@ -4,6 +4,8 @@ import math
 from torch.nn.functional import normalize
 import sys
 
+def nonNan(x):
+    return x[~x.isnan()]
 
 def batched_invert_matrix(A):
     """
@@ -11,16 +13,13 @@ def batched_invert_matrix(A):
     @param A: matrix_batch (torch.Tensor): Input tensor of shape (b, n, 3, 3) representing n 3x3 matrices.
     @return: torch.Tensor: Output tensor of shape (n, 3, 3) representing the inverted matrices with NaN for non-invertible ones.
     """
-
     first, second = int(A.shape[0]), int(A.shape[1])
-    M = A.reshape(-1, 9)
-    a, b, c, d, e, f, g, h, i = [x.squeeze(-1) for x in torch.split(M, [1 for _ in range(9)], dim=-1)]
-    coefficient = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
-    entries = torch.stack([e * i - f * h, c * h - b * i, b * f - c * e, f * g - d * i,
-                           a * i - c * g, c * d - a * f, d * h - e * g, b * g - a * h, a * e - b * d], dim=1)
-    entries /= coefficient[:, None]
-    entries = entries.reshape(-1, 3, 3)
-    return entries.unflatten(0, [first, second])
+    M = A.reshape(-1, 3, 3)
+    mask = ~torch.isclose(torch.det(M), torch.tensor(0., dtype=A.dtype), atol=1e-5)
+    M_inv = torch.full(M.shape, float('nan'), dtype=A.dtype)
+    M_inv[mask] = torch.inverse(M[mask])
+    return M_inv.unflatten(0, [first, second])
+
 
 
 def batched_regression(A, B):
@@ -30,10 +29,11 @@ def batched_regression(A, B):
     @param B: Targets
     @return: The closed form solution of the least squares instance
     """
-    X = A
-    XX = batched_invert_matrix(X.permute(0, 1, 3, 2) @ X)
-    XXX = XX @ X.permute(0, 1, 3, 2)
-    matrix = XXX @ B
+    mask = torch.linalg.matrix_rank(A) == 3
+    new_shape = list(B.shape)
+    new_shape[-2] = A.shape[-1]
+    matrix = torch.full(new_shape, float('nan'), dtype=A.dtype)
+    matrix[mask] = torch.linalg.lstsq(A[mask], B[mask])[0]
     return matrix
 
 
@@ -80,9 +80,9 @@ def bcompute_penalization(matrix, initial_cell):
     """
     dtype = matrix.dtype
     first, second = int(matrix.shape[0]), int(matrix.shape[1])
-    matrix, initial_cell = matrix.flatten(0, 1), initial_cell.flatten(0, 1)
+    matrix = matrix.flatten(0, 1)
     diff_cell = torch.abs(
-        matrix.norm(dim=-1, p=2) - initial_cell[:3].norm(dim=-1, p=2).to(matrix.device)
+        matrix.norm(dim=-1, p=2) - initial_cell.norm(dim=-1, p=2).to(matrix.device)
     )
     total_diff_cell = torch.max(diff_cell, dim=-1).values.to(matrix.device, dtype=dtype)
     penalization = torch.max(torch.tensor(0, dtype=dtype, device=matrix.device), total_diff_cell) ** 3
@@ -207,7 +207,6 @@ class ToroIndexer(nn.Module):
         Then it attaches to each of those a copy of the initial_cell, and rotataes them angle_resolution times by keeping the first vector fixed.
         In this way it obtains a set of candidate bases
         @param source: The spots as 3D points projected on the Ewald sphere
-        @param unite_sphere_lattice: A sample of points on the unit sphere
         @param initial_cell: The given initial basis cell for this molecule
         @param dist_to_integer: The maximum allowed distance for a projection to its closest integer to be considered as a true spot
         @param num_top_solutions: the number of vectors from the scaled unite_sphere_lattice that will be considered for the second part of the algorithm
@@ -345,9 +344,9 @@ class ToroIndexer(nn.Module):
         """
 
         non_zero_mask = torch.sum(source ** 2, dim=-1) != 0
-        predictions = torch.bmm(source, base.transpose(1, 2))
+        predictions = torch.bmm(source, base.transpose(-2, -1))
         hkl = torch.round(predictions)
-        back_points = torch.bmm(hkl, batched_invert_matrix(base.unsqueeze(0)).squeeze(0).transpose(1, 2))
+        back_points = torch.bmm(hkl, batched_invert_matrix(base.unsqueeze(0)).squeeze(0).transpose(-2, -1))
 
         errors = (source - back_points).norm(dim=-1, p=2)
         mask = errors < precision
@@ -407,6 +406,9 @@ class ToroIndexer(nn.Module):
             non_zero_mask = torch.sum(torch.abs(peaks), dim=-1) != 0
             is_inlier &= non_zero_mask.repeat(is_inlier.shape[1], 1, 1).transpose(0, 1)
 
+            if self.debugging:
+                self.is_inlier = is_inlier.clone()
+
             repeated_peaks = peaks.repeat(num_top_solutions, 1, 1, 1).transpose(0, 1)
             top_bases, source_mask, error, penalization = self.index_candidate_solutions(
                 candidate_bases,
@@ -418,6 +420,7 @@ class ToroIndexer(nn.Module):
 
             if self.debugging:
                 self.top_bases = top_bases.clone().detach()
+                self.penalization = penalization.clone()
 
             # We extract iteratively the best solutions and ignore the spots they contain for subsequent rounds
             # while there is still a solution that contains at lest the min_num_spots, in this way we find multicrystals
@@ -430,6 +433,9 @@ class ToroIndexer(nn.Module):
 
             # we take the solution with the maximum number of inlier spots, but penalized
             solution_instance = torch.argmax(torch.sum(source_mask, dim=-1).int() - penalization, dim=-1)
+
+            if self.debugging:
+                self.solution_instance = solution_instance.clone()
 
             while torch.max(
                     torch.sum(batched_subset_from_indices(source_mask, solution_instance.unsqueeze(1)).squeeze(1),
@@ -458,6 +464,9 @@ class ToroIndexer(nn.Module):
             solution_errors = torch.stack(solution_errors, 1)
             solution_penalization = torch.stack(solution_penalization, 1)
             solution_sources = torch.stack(solution_sources, 1)
+
+            if self.debugging:
+                self.solution_bases = solution_bases.clone()
 
             source_for_filtering = peaks.repeat(int(solution_bases.shape[1]), 1, 1, 1).transpose(0, 1)
 
@@ -494,20 +503,29 @@ class ToroIndexer(nn.Module):
         error = torch.zeros_like(source_mask, dtype=self.type)
         for round in range(num_iterations):
             # We turn to zeros the locations that should not be considered for fitting
-            masked_source = peaks * source_mask[:, :, :, None]
-            targets = torch.round(masked_source @ bases.transpose(2, 3))
+            masked_source = peaks * source_mask[..., None]
+            targets = torch.round(masked_source @ bases.transpose(-2, -1))
             # The regression intrinsically ignores all zero vectors that have zero targets as their residual is zero
             transposed_bases = batched_regression(masked_source, targets)
-            bases = transposed_bases.transpose(2, 3)
+            assert(torch.allclose(
+                nonNan(batched_regression(masked_source, targets)[0]),
+                nonNan(batched_regression(masked_source[0].unsqueeze(0), targets[0].unsqueeze(0))),
+                atol=1e-5))
+            bases = transposed_bases.transpose(-2, -1)
 
             # we compute now the inverse of the targets in reciprocal space which will be compared against source
             predictions = peaks @ transposed_bases
             back_points = torch.round(predictions) @ batched_invert_matrix(transposed_bases)
+            assert (torch.allclose(
+                nonNan(batched_invert_matrix(transposed_bases)[0]),
+                nonNan(batched_invert_matrix(transposed_bases[0].unsqueeze(0))),
+                atol=1e-5))
+
 
             non_zero_mask = torch.sum(torch.abs(peaks), dim=-1) != 0
 
             # we compute now the new error
-            error = torch.norm(peaks - back_points, dim=-1)
+            error = torch.norm(peaks - back_points, dim=-1, p=2)
 
             source_mask = error < error_bounds[round]
             source_mask &= non_zero_mask
@@ -515,6 +533,8 @@ class ToroIndexer(nn.Module):
         # we should discard solutions that look at crystals differing too much from the given solution
         penalization = bcompute_penalization(
             bases,
-            initial_cell.repeat(int(len(bases)), 1, 1)
+            initial_cell
         )
+        assert(torch.allclose(nonNan(bcompute_penalization(bases, initial_cell)[0]),
+                       nonNan(bcompute_penalization(bases[0].unsqueeze(0), initial_cell)[0]), atol=1e-5))
         return bases, source_mask, error * source_mask, penalization

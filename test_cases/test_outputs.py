@@ -17,8 +17,8 @@ import os
 
 cwd = os.getcwd()
 
-# streams_path = cwd+"/../data/lyso_12p4kev_1khz_150mm_run000026"
-streams_path = cwd+"/../data/performance_test"
+streams_path = cwd+"/../data/lyso_12p4kev_1khz_150mm_run000026"
+# streams_path = cwd+"/../data/performance_test"
 mylist = glob.glob(streams_path + '/*.stream', recursive=True)
 print("List of stream files to be used", mylist)
 
@@ -71,10 +71,11 @@ im_cpu.debugging = True
 
 for path in mylist:
     mds = RawStreamDS(path, spot_sequence_length, no_padding=False)
-    data_loader = DataLoader(mds, batch_size=batch_size, shuffle=True)
+    data_loader = DataLoader(mds, batch_size=batch_size, shuffle=False)
 
     cell_parameters = mds.instances[0]['initial_cell']
     initial_cell = get_ideal_basis(cell_parameters)
+    print(initial_cell.p)
 
     solution_triples_list = []
     solution_indices_list = []
@@ -85,8 +86,9 @@ for path in mylist:
         im.double()
         im_cpu.double()
         for source, indices in tqdm(data_loader):
+            source = source.to(dtype=torch.float64)
             solution_successes_cpu, solution_triples_cpu, solution_masks_cpu, solution_errors_cpu, solution_penalization_cpu = im_cpu(
-                source[0].unsqueeze(0).to(dtype=torch.float64),
+                source[0].unsqueeze(0),
                 initial_cell,
                 min_num_spots=8,
                 angle_resolution=angle_resolution,
@@ -109,8 +111,14 @@ for path in mylist:
             assert(torch.allclose(im.candidates[:, 0][~im.candidates[:, 0].isnan()],  im_cpu.candidates[:, 0][~im_cpu.candidates[:, 0].isnan()], atol=1e-5))
             assert(torch.allclose(im.raw_bases[0][~im.raw_bases[0].isnan()], im_cpu.raw_bases[0][~im_cpu.raw_bases[0].isnan()], atol=1e-5))
             assert(torch.allclose(im.filtered_bases[0][~im.filtered_bases[0].isnan()], im_cpu.filtered_bases[0][~im_cpu.filtered_bases[0].isnan()], atol=1e-5))
+            assert (torch.all(im.is_inlier[0] == im_cpu.is_inlier[0]))
+
+
             mask = (~im.top_bases[0].isnan()) & (~im_cpu.top_bases[0].isnan())
-            assert(im.top_bases[0][mask], im_cpu.top_bases[0][mask])
+            assert(torch.allclose(im.top_bases[0][mask], im_cpu.top_bases[0][mask], atol=1e-5))
+            mask = ~im.penalization[0].isnan()
+            assert (torch.allclose(im.penalization[0][mask], im_cpu.penalization[0][mask], atol=1e-5))
+            # assert (torch.allclose(im_cpu.solution_bases[0], im.solution_bases[0], atol=1e-5))
 
 
 

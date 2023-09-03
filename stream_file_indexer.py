@@ -30,6 +30,7 @@ print("Using device ", device)
 spot_sequence_length = 80
 
 # performing params
+batch_size = 50
 lattice_size = 50000
 angle_resolution = 150
 num_top_solutions = 400
@@ -47,6 +48,12 @@ lattice_size = 20000
 angle_resolution = 100
 num_top_solutions = 50
 
+# # cpu
+# batch_size = 1
+# lattice_size = 50000
+# angle_resolution = 150
+# num_top_solutions = 400
+
 
 im = ToroIndexer(
     lattice_size=lattice_size,
@@ -55,7 +62,6 @@ im = ToroIndexer(
     filter_precision=0.00075,
     filter_min_num_spots=6
 ).to(device)
-
 
 
 for path in mylist:
