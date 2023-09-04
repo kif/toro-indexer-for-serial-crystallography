@@ -368,8 +368,7 @@ class ToroIndexer(nn.Module):
                  bases[:, 2, :]], 1
             )
 
-            alpha = 2 * math.pi * torch.arange(angle_resolution, dtype=torch.int) / angle_resolution
-            alpha = alpha.to(device, dtype=self.type)
+            alpha = 2 * torch.pi * torch.arange(angle_resolution, device=device, dtype=torch.int) / angle_resolution
             R = rotations(candidates.flatten(0, 1), alpha, angle_resolution)
 
             bts = bases.transpose(1, 2).repeat(angle_resolution, 1, 1, 1).transpose(0, 1)
@@ -410,9 +409,7 @@ class ToroIndexer(nn.Module):
 
         errors = (source - back_points).norm(dim=-1, p=2)
         mask = errors < precision
-
         mask &= non_zero_mask
-
         return torch.sum(mask, dim=-1) >= min_num_spots
 
     def forward(self, peaks, initial_cell, min_num_spots: int, angle_resolution: int, num_top_solutions: int):

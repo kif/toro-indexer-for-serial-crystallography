@@ -1,3 +1,4 @@
+import torch
 import glob
 from utils.datasets.RawStreamData import RawStreamDS
 from utils.functions_SX import get_ideal_basis
@@ -7,8 +8,10 @@ from tqdm import tqdm
 from torch.utils.data import DataLoader
 from models.indexer_model import ToroIndexer
 import os
+import time
 from argparse import ArgumentParser
 import lovely_tensors as lt
+
 lt.monkey_patch()
 
 precise = "precise"
@@ -17,13 +20,15 @@ fast = "fast"
 insane = "insane"
 
 parser = ArgumentParser(description="ToRO testing")
-parser.add_argument("--model", type=str, choices={precise, middle, fast, insane}, help="Choose the desired parameters to get the trade-off between speed and performance.")
+parser.add_argument("--model", type=str, choices={precise, middle, fast, insane},
+                    help="Choose the desired parameters to get the trade-off between speed and performance.")
 parser.add_argument("--batch_size", type=int, default=50, help="Choose the largest batch size that fits in your GPU.")
-parser.add_argument("--speed_test", action='store_true', help="Activate when testing speed to remove uneccesary actions, no results will be stored, only the speed will be shown")
+parser.add_argument("--speed_test", action='store_true',
+                    help="Activate when testing speed to remove uneccesary actions, no results will be stored, only the speed will be shown")
 args = vars(parser.parse_args())
 
 cwd = os.getcwd()
-streams_path = cwd+"/data/lyso_12p4kev_1khz_150mm_run000026"
+streams_path = cwd + "/data/lyso_12p4kev_1khz_150mm_run000026"
 # streams_path = cwd+"/data/performance_test"
 mylist = glob.glob(streams_path + '/*.stream', recursive=True)
 print("List of stream files to be used", mylist)
@@ -61,7 +66,6 @@ elif args["model"] == insane:
 else:
     raise ValueError("No --model was selected, please run with --model={precise, middle, fast, insane}")
 
-
 im = ToroIndexer(
     lattice_size=lattice_size,
     num_iterations=5,
@@ -70,7 +74,7 @@ im = ToroIndexer(
     filter_min_num_spots=6
 ).to(device)
 
-
+print("batch_size ", batch_size)
 for path in mylist:
     mds = RawStreamDS(path, spot_sequence_length, no_padding=False)
     data_loader = DataLoader(mds, batch_size=batch_size, shuffle=True)
@@ -89,9 +93,30 @@ for path in mylist:
 
     wlen = mds.instances[0]['wavelength']
     with torch.no_grad():
+        if args["speed_test"]:
+            # Initialize CUDA events
+            if torch.cuda.is_available():
+                start_event = torch.cuda.Event(enable_timing=True)
+                end_event = torch.cuda.Event(enable_timing=True)
+
+            # Warm-up
+            im(
+                torch.randn(5, 80, 3, device=device),
+                initial_cell,
+                min_num_spots=8,
+                angle_resolution=angle_resolution,
+                num_top_solutions=num_top_solutions
+            )
+            frames_per_second = []
+
         print("Indexing...")
         for source, indices in tqdm(dataset):
             source = source.to(device)
+            if args["speed_test"]:
+                if torch.cuda.is_available():
+                    start_event.record()
+                else:
+                    start_time = time.perf_counter()
             solution_successes, solution_triples, solution_masks, solution_errors, solution_penalization = im(
                 source,
                 initial_cell,
@@ -99,6 +124,18 @@ for path in mylist:
                 angle_resolution=angle_resolution,
                 num_top_solutions=num_top_solutions
             )
+            if args["speed_test"]:
+                if torch.cuda.is_available():
+                    end_event.record()
+                    # Wait for the events to be recorded
+                    torch.cuda.synchronize()
+                    elapsed_time = start_event.elapsed_time(end_event)
+                else:
+                    end_time = time.perf_counter()
+                    elapsed_time = (end_time - start_time) * 1000
+
+                frames_per_second.append(args['batch_size'] * 1000 / elapsed_time)
+
             if not args["speed_test"]:
                 for batch, (success_crystals, matrix_crystals) in enumerate(zip(solution_successes, solution_triples)):
                     idx = indices[batch].item()
@@ -116,3 +153,11 @@ for path in mylist:
         np.save("solution_matrices", found_triples.to('cpu').numpy())
         print(len(solution_triples_list), " found out of ", len(mds))
         print("Solutions have been saved, you can view them using the provided notebook: results_visualization.ipynb")
+    else:
+        # Compute average and standard deviation of the time taken
+        avg_fs = sum(frames_per_second) / len(frames_per_second)
+        std_dev = (sum((x - avg_fs) ** 2 for x in frames_per_second) / len(frames_per_second)) ** 0.5
+        print(f"Average number of frames per second: %.2f f/s, Standard Deviation: %.2f f/s" % (avg_fs, std_dev))
+        with open("speed_statistics.txt", 'a+') as f:
+            line = f"GPU:{torch.cuda.get_device_name(device)}, model:{args['model']}, batch_size:{args['batch_size']}. Average number of frames per second: {avg_fs:.2f} f/s, Standard Deviation: {std_dev:.2f} f/s"
+            f.write(line + '\n')
