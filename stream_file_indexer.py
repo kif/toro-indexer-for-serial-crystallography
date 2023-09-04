@@ -48,11 +48,11 @@ lattice_size = 20000
 angle_resolution = 100
 num_top_solutions = 50
 
-# # cpu
-# batch_size = 1
-# lattice_size = 50000
-# angle_resolution = 150
-# num_top_solutions = 400
+# cpu
+batch_size = 1
+lattice_size = 50000
+angle_resolution = 150
+num_top_solutions = 400
 
 
 im = ToroIndexer(
@@ -100,6 +100,6 @@ for path in mylist:
 
     found_indices = torch.stack(solution_indices_list)
     found_triples = torch.stack(solution_triples_list)
-    np.save("solution_indices", found_indices.numpy())
-    np.save("solution_matrices", found_triples.numpy())
+    np.save("solution_indices", found_indices.to('cpu').numpy())
+    np.save("solution_matrices", found_triples.to('cpu').numpy())
     print(len(solution_triples_list), " found out of ", len(mds))

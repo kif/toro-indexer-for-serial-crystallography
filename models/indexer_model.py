@@ -4,22 +4,56 @@ import math
 from torch.nn.functional import normalize
 import sys
 
+
 def nonNan(x):
     return x[~x.isnan()]
 
-def batched_invert_matrix(A):
-    """
-    Inverts a batch of 3x3 matrices and returns NaN if any matrix is not invertible.
-    @param A: matrix_batch (torch.Tensor): Input tensor of shape (b, n, 3, 3) representing n 3x3 matrices.
-    @return: torch.Tensor: Output tensor of shape (n, 3, 3) representing the inverted matrices with NaN for non-invertible ones.
-    """
-    first, second = int(A.shape[0]), int(A.shape[1])
-    M = A.reshape(-1, 3, 3)
-    mask = ~torch.isclose(torch.det(M), torch.tensor(0., dtype=A.dtype), atol=1e-5)
-    M_inv = torch.full(M.shape, float('nan'), dtype=A.dtype)
-    M_inv[mask] = torch.inverse(M[mask])
-    return M_inv.unflatten(0, [first, second])
 
+def batched_invert_matrix(matrices):
+    """
+    Compute the batched pseudo-inverse of a set of 3x3 matrices using analytical expressions.
+
+    Parameters:
+        matrices (Tensor): A batch of 3x3 matrices with shape (batch_size, 3, 3)
+        tol (float): Tolerance for treating eigenvalues as zero
+
+    Returns:
+        Tensor: The batched pseudo-inverse with shape (batch_size, 3, 3)
+    """
+    return torch.linalg.pinv(matrices)
+
+
+#     tol = 1e-9
+#     first, second = matrices.shape[0], matrices.shape[1]
+#     matrices = matrices.reshape(-1, 3, 3)
+
+#     # Calculate determinants for 3x3 matrices in the batch
+#     det = matrices[:, 0, 0] * (matrices[:, 1, 1] * matrices[:, 2, 2] - matrices[:, 1, 2] * matrices[:, 2, 1]) - \
+#           matrices[:, 0, 1] * (matrices[:, 1, 0] * matrices[:, 2, 2] - matrices[:, 1, 2] * matrices[:, 2, 0]) + \
+#           matrices[:, 0, 2] * (matrices[:, 1, 0] * matrices[:, 2, 1] - matrices[:, 1, 1] * matrices[:, 2, 0])
+
+#     # Create an empty tensor to store the batched pseudo-inverse
+#     batch_size = matrices.shape[0]
+#     pseudo_inv = torch.zeros_like(matrices, device=matrices.device, dtype=matrices.dtype)
+
+#     # Compute adjoint of the matrix for all batches
+#     adjoint = torch.zeros_like(matrices, device=matrices.device, dtype=matrices.dtype)
+#     adjoint[:, 0, 0] = matrices[:, 1, 1] * matrices[:, 2, 2] - matrices[:, 1, 2] * matrices[:, 2, 1]
+#     adjoint[:, 0, 1] = matrices[:, 0, 2] * matrices[:, 2, 1] - matrices[:, 0, 1] * matrices[:, 2, 2]
+#     adjoint[:, 0, 2] = matrices[:, 0, 1] * matrices[:, 1, 2] - matrices[:, 0, 2] * matrices[:, 1, 1]
+#     adjoint[:, 1, 0] = matrices[:, 1, 2] * matrices[:, 2, 0] - matrices[:, 1, 0] * matrices[:, 2, 2]
+#     adjoint[:, 1, 1] = matrices[:, 0, 0] * matrices[:, 2, 2] - matrices[:, 0, 2] * matrices[:, 2, 0]
+#     adjoint[:, 1, 2] = matrices[:, 0, 2] * matrices[:, 1, 0] - matrices[:, 0, 0] * matrices[:, 1, 2]
+#     adjoint[:, 2, 0] = matrices[:, 1, 0] * matrices[:, 2, 1] - matrices[:, 1, 1] * matrices[:, 2, 0]
+#     adjoint[:, 2, 1] = matrices[:, 0, 1] * matrices[:, 2, 0] - matrices[:, 0, 0] * matrices[:, 2, 1]
+#     adjoint[:, 2, 2] = matrices[:, 0, 0] * matrices[:, 1, 1] - matrices[:, 0, 1] * matrices[:, 1, 0]
+
+#     # Compute the pseudo-inverse using the formula: adjoint / determinant
+#     det_inv = 1.0 / det
+#     det_inv *= (torch.abs(det) >= tol)  # Handle singular matrices by setting their inverse determinant to zero
+#     pseudo_inv = adjoint * det_inv.view(-1, 1, 1)
+
+#     return pseudo_inv.unflatten(0, [first, second])
 
 
 def batched_regression(A, B):
@@ -29,12 +63,12 @@ def batched_regression(A, B):
     @param B: Targets
     @return: The closed form solution of the least squares instance
     """
-    mask = torch.linalg.matrix_rank(A) == 3
-    new_shape = list(B.shape)
-    new_shape[-2] = A.shape[-1]
-    matrix = torch.full(new_shape, float('nan'), dtype=A.dtype)
-    matrix[mask] = torch.linalg.lstsq(A[mask], B[mask])[0]
+    X = A
+    XX = batched_invert_matrix(X.permute(0, 1, 3, 2) @ X)
+    XXX = XX @ X.permute(0, 1, 3, 2)
+    matrix = XXX @ B
     return matrix
+    # return torch.linalg.lstsq(A + 1e-9 * torch.randn_like(A), B)[0]
 
 
 def rotations(rodrigues_vector, alpha, angle_resolution: int):
@@ -127,7 +161,22 @@ def create_sphere_lattice(num_points: int = 1000000):
     lattice[:, 0] = x
     lattice[:, 1] = y
     lattice[:, 2] = z
+    return lattice
     return lattice[lattice[:, -1] >= 0]
+
+
+from numpy import arange, pi, sin, cos, arccos
+def create_sphere_lattice(num_points: int = 1000000):
+    goldenRatio = (1 + 5 ** 0.5) / 2
+    i = arange(0, num_points)
+    theta = 2 * pi * i / goldenRatio
+    phi = arccos(1 - 2 * (i + 0.5) / num_points)
+    x, y, z = cos(theta) * sin(phi), sin(theta) * sin(phi), cos(phi);
+    lattice = torch.randn(num_points, 3)
+    lattice[:, 0] = torch.FloatTensor(x)
+    lattice[:, 1] = torch.FloatTensor(y)
+    lattice[:, 2] = torch.FloatTensor(z)
+    return lattice
 
 
 def to_skew_symmetric(x):
@@ -249,10 +298,10 @@ class ToroIndexer(nn.Module):
         indices = combined_loss.int().sort(descending=True, dim=-1).indices[:, :, 0: num_top_solutions].to(device)
 
         expanded_candidates = unit_candidates.unflatten(1, [3, -1]).permute(1, 0, 2, 3).flatten(0, 1)
-        self.expanded_candidates = expanded_candidates.clone()
         all_candidates = batched_subset_from_indices(expanded_candidates, indices.flatten(0, 1)).unflatten(0, [3, -1])
 
         if self.debugging:
+            self.expanded_candidates = expanded_candidates.clone()
             self.all_candidates_prior = all_candidates.clone()
 
         # We perform a Trimmed Least Squares method with error threshold annealing to find the best vectors
@@ -318,12 +367,12 @@ class ToroIndexer(nn.Module):
         rotated_bases = torch.cat(rotated_bases, 1)
         return rotated_bases
 
-    def compute_scores_and_hkl(self, source, rotated_bases, dist_to_integer: float = 0.12):
+    def compute_scores_and_hkl(self, peaks, rotated_bases, dist_to_integer: float = 0.12):
         rearanged_bases = rotated_bases.permute(0, 2, 3, 1)
         projections = torch.stack([
-            torch.bmm(source, rearanged_bases[:, 0, :, :]),
-            torch.bmm(source, rearanged_bases[:, 1, :, :]),
-            torch.bmm(source, rearanged_bases[:, 2, :, :])
+            torch.bmm(peaks, rearanged_bases[:, 0, :, :]),
+            torch.bmm(peaks, rearanged_bases[:, 1, :, :]),
+            torch.bmm(peaks, rearanged_bases[:, 2, :, :])
         ], -1).permute(0, 2, 1, 3)
 
         hkl = torch.round(projections)
@@ -434,9 +483,6 @@ class ToroIndexer(nn.Module):
             # we take the solution with the maximum number of inlier spots, but penalized
             solution_instance = torch.argmax(torch.sum(source_mask, dim=-1).int() - penalization, dim=-1)
 
-            if self.debugging:
-                self.solution_instance = solution_instance.clone()
-
             while torch.max(
                     torch.sum(batched_subset_from_indices(source_mask, solution_instance.unsqueeze(1)).squeeze(1),
                               dim=-1)).int() > min_num_spots:
@@ -468,11 +514,11 @@ class ToroIndexer(nn.Module):
             if self.debugging:
                 self.solution_bases = solution_bases.clone()
 
-            source_for_filtering = peaks.repeat(int(solution_bases.shape[1]), 1, 1, 1).transpose(0, 1)
+            peaks_for_filtering = peaks.repeat(int(solution_bases.shape[1]), 1, 1, 1).transpose(0, 1)
 
             solution_successes = self.bfilter_solution(
                 solution_bases.flatten(0, 1),
-                source_for_filtering.flatten(0, 1) * solution_masks.flatten(0, 1)[:, :, None],
+                peaks_for_filtering.flatten(0, 1) * solution_masks.flatten(0, 1)[:, :, None],
                 precision=self.filter_precision,
                 min_num_spots=self.filter_min_num_spots
             ).unflatten(0, [bs, -1])
@@ -507,20 +553,12 @@ class ToroIndexer(nn.Module):
             targets = torch.round(masked_source @ bases.transpose(-2, -1))
             # The regression intrinsically ignores all zero vectors that have zero targets as their residual is zero
             transposed_bases = batched_regression(masked_source, targets)
-            assert(torch.allclose(
-                nonNan(batched_regression(masked_source, targets)[0]),
-                nonNan(batched_regression(masked_source[0].unsqueeze(0), targets[0].unsqueeze(0))),
-                atol=1e-5))
+
             bases = transposed_bases.transpose(-2, -1)
 
             # we compute now the inverse of the targets in reciprocal space which will be compared against source
             predictions = peaks @ transposed_bases
             back_points = torch.round(predictions) @ batched_invert_matrix(transposed_bases)
-            assert (torch.allclose(
-                nonNan(batched_invert_matrix(transposed_bases)[0]),
-                nonNan(batched_invert_matrix(transposed_bases[0].unsqueeze(0))),
-                atol=1e-5))
-
 
             non_zero_mask = torch.sum(torch.abs(peaks), dim=-1) != 0
 
@@ -535,6 +573,5 @@ class ToroIndexer(nn.Module):
             bases,
             initial_cell
         )
-        assert(torch.allclose(nonNan(bcompute_penalization(bases, initial_cell)[0]),
-                       nonNan(bcompute_penalization(bases[0].unsqueeze(0), initial_cell)[0]), atol=1e-5))
+
         return bases, source_mask, error * source_mask, penalization

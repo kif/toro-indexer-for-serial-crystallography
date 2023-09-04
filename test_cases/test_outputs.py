@@ -75,7 +75,6 @@ for path in mylist:
 
     cell_parameters = mds.instances[0]['initial_cell']
     initial_cell = get_ideal_basis(cell_parameters)
-    print(initial_cell.p)
 
     solution_triples_list = []
     solution_indices_list = []
@@ -83,10 +82,9 @@ for path in mylist:
     wlen = mds.instances[0]['wavelength']
     with torch.no_grad():
 
-        im.double()
-        im_cpu.double()
+
         for source, indices in tqdm(data_loader):
-            source = source.to(dtype=torch.float64)
+            source = source.to(dtype=torch.float32)
             solution_successes_cpu, solution_triples_cpu, solution_masks_cpu, solution_errors_cpu, solution_penalization_cpu = im_cpu(
                 source[0].unsqueeze(0),
                 initial_cell,
@@ -95,7 +93,7 @@ for path in mylist:
                 num_top_solutions=num_top_solutions
             )
 
-            source = source.to(device, dtype=torch.float64)
+            source = source.to(device, dtype=torch.float32)
             solution_successes, solution_triples, solution_masks, solution_errors, solution_penalization = im(
                 source,
                 initial_cell,
@@ -118,7 +116,6 @@ for path in mylist:
             assert(torch.allclose(im.top_bases[0][mask], im_cpu.top_bases[0][mask], atol=1e-5))
             mask = ~im.penalization[0].isnan()
             assert (torch.allclose(im.penalization[0][mask], im_cpu.penalization[0][mask], atol=1e-5))
-            # assert (torch.allclose(im_cpu.solution_bases[0], im.solution_bases[0], atol=1e-5))
 
 
 
