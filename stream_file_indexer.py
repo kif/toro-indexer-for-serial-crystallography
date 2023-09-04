@@ -42,14 +42,14 @@ num_top_solutions = 400
 # angle_resolution = 150
 # num_top_solutions = 200
 
-# super fast params
-batch_size = 200
-lattice_size = 20000
-angle_resolution = 100
-num_top_solutions = 50
+# # super fast params
+# batch_size = 1
+# lattice_size = 20000
+# angle_resolution = 100
+# num_top_solutions = 50
 
 # cpu
-batch_size = 1
+batch_size = 20
 lattice_size = 50000
 angle_resolution = 150
 num_top_solutions = 400
@@ -69,6 +69,7 @@ for path in mylist:
     data_loader = DataLoader(mds, batch_size=batch_size, shuffle=True)
     # We load the entire dataset into memory already batched before starting the test performance
     dataset = [(source, indices) for source, indices in tqdm(data_loader)]
+    # dataset = [next(iter(data_loader))]
 
     cell_parameters = mds.instances[0]['initial_cell']
     initial_cell = get_ideal_basis(cell_parameters)

@@ -20,7 +20,18 @@ def batched_invert_matrix(matrices):
     Returns:
         Tensor: The batched pseudo-inverse with shape (batch_size, 3, 3)
     """
-    return torch.linalg.pinv(matrices)
+    first, second = int(matrices.shape[0]), int(matrices.shape[1])
+    M = matrices.reshape(-1, 9)
+    # M += 1e-12 * torch.randn_like(M)
+    a, b, c, d, e, f, g, h, i = [x.squeeze(-1) for x in torch.split(M, [1 for _ in range(9)], dim=-1)]
+    det = 1 / (a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g))
+    det *= (torch.abs(det) >= 1e-10)
+    entries = torch.stack([e * i - f * h, c * h - b * i, b * f - c * e, f * g - d * i,
+                           a * i - c * g, c * d - a * f, d * h - e * g, b * g - a * h, a * e - b * d], dim=1)
+    entries *= det[:, None]
+    entries = entries.reshape(-1, 3, 3)
+    return entries.unflatten(0, [first, second])
+    # return torch.linalg.pinv(matrices)
 
 
 #     tol = 1e-9
@@ -547,6 +558,7 @@ class ToroIndexer(nn.Module):
         base = 2 ** (math.log(self.error_precision * 100) / ((num_iterations - 1) * math.log(2)))
         error_bounds = [float(start * base ** i) for i in range(num_iterations)]  # min error is 0.002
         error = torch.zeros_like(source_mask, dtype=self.type)
+        non_zero_mask = torch.sum(torch.abs(peaks), dim=-1) != 0
         for round in range(num_iterations):
             # We turn to zeros the locations that should not be considered for fitting
             masked_source = peaks * source_mask[..., None]
@@ -559,8 +571,6 @@ class ToroIndexer(nn.Module):
             # we compute now the inverse of the targets in reciprocal space which will be compared against source
             predictions = peaks @ transposed_bases
             back_points = torch.round(predictions) @ batched_invert_matrix(transposed_bases)
-
-            non_zero_mask = torch.sum(torch.abs(peaks), dim=-1) != 0
 
             # we compute now the new error
             error = torch.norm(peaks - back_points, dim=-1, p=2)
