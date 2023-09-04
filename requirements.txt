@@ -1,2 +1,5 @@
 torch==2.0.0
 numpy==1.23.5
+lovely-numpy==0.2.8
+lovely-tensors==0.1.14
+matplotlib==3.6.2
