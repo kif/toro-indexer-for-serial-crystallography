@@ -41,9 +41,7 @@ def print_solution(best_triple, idx, mds, initial_cell):
 
     if 'predicted_reflections' in mds.instances[idx]:
         predicted = mds.instances[idx]['predicted_reflections'][:, :2]
-        plt.scatter(predicted_xgandalf[:, 0], predicted_xgandalf[:, 1], s=50, facecolors='none', edgecolors='g')
-        plt.scatter(mds.instances[idx]['orgx'] - 1 * (predicted[:, 0] - mds.instances[idx]['orgx']), predicted[:, 1],
-                    s=140, facecolors='none', edgecolors='k')
+        plt.scatter(predicted_xgandalf[:, 0], predicted_xgandalf[:, 1], s=140, facecolors='none', edgecolors='g')
 
     plt.scatter(predicted_spots[:, 0], predicted_spots[:, 1], s=60, facecolors='none', edgecolors='m')
 
