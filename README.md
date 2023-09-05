@@ -1,40 +1,31 @@
 # TORO Indexer for serial crystallography
 
-Serial Crystallography (SX) involves the processing of thousands of diffraction patterns in random orientations. To compile a complete data set, these patterns must be indexed, integrated, and merged. Herein, we introduce TORO (Torch-Powered Robust Optimization) Indexer, a robust, adaptable, and performant indexing algorithm. Developed using the PyTorch framework, TORO Indexer can operate on GPUs, CPUs, TPUs, and other accelerators supported by PyTorch, ensuring it adapts to a broad range of computational setups. On a modern NVIDIA A100 GPU, TORO achieves an indexing speed of 250 images/s. 
+Serial Crystallography (SX) involves the processing of thousands of diffraction patterns in random orientations. To compile a complete data set, these patterns must be indexed, integrated, and merged. Herein, we introduce TORO (Torch-Powered Robust Optimization) Indexer, a robust, adaptable, and performant indexing algorithm. Developed using the PyTorch framework, TORO Indexer can operate on GPUs, CPUs, TPUs, and other accelerators supported by PyTorch, ensuring it adapts to a broad range of computational setups. On a modern NVIDIA A100 GPU, TORO achieves an indexing speed of 3800 frames/s. 
 
 ## Introduction
 
-This is a Renku project - basically a git repository with some
-bells and whistles. You'll find we have already created some
-useful things like `data` and `notebooks` directories and
-a `Dockerfile`.
+The entire model code lies within 500 lines stored in models/indexer_model.py. In there, the class ToroIndexer is all you need to run indexing.
 
-## Working with the project
+## Trying the indexer
 
 The simplest way to start your project is right from the Renku
 platform - just click on the `Sessions` tab and start a new session.
-This will start an interactive environment right in your browser.
+This will start an interactive environment right in your browser. 
+However it might be that no GPU is available, and only limited CPU performance can be tested.
 
 To work with the project anywhere outside the Renku platform,
 click the `Settings` tab where you will find the
 git repo URLs - use `git` to clone the project on whichever machine you want.
+Two streams of data are provided with this repository to try the indexer.
 
-### Changing interactive session dependencies
 
-Initially we install a very minimal set of packages to keep the images small.
-However, you can add python and conda packages in `requirements.txt` and
-`environment.yml` to your heart's content. If you need more fine-grained
-control over your environment, please see [the documentation](https://renku.readthedocs.io/en/stable/topic-guides/customizing-sessions.html).
+### Trying the indexer
+To try the indeer run the command `python stream_file_indexer.py --model=fast --batch_size=100` , the batch size is recommended to be as high as your GPU alows it.
+We provide 4 predetermined configurations for the model: `precise`, `middle`, `fast`, `insane` with different trade-offs between speed and the number of indexable frames found.
+In our accompanying paper we benchmarked the `precise` and `fast` versions of our model.
+If you want to test performance of the indexer, you can add the flag `--speed_test`, which will disable the storing of the solutions and preloads the dataset into memory to get test only the performance of the indexer.
 
-## Project configuration
-
-Project options can be found in `.renku/renku.ini`. In this
-project there is currently only one option, which specifies
-the default type of environment to open, in this case `/lab` for
-JupyterLab. You may also choose `/tree` to get to the "classic" Jupyter
-interface.
-
-## Moving forward
-
-Once you feel at home with your project, we recommend that you replace
-this README file with your own project documentation! Happy data wrangling!
+### Visualizing the results
+Once you have run the `python stream_file_indexer.py` command (without the `--speed_test` flag), 
+you can visualize the results using the notebook `notebooks/results_visualization.ipynb`. 
+Simply run all the cells, and reload the last one to visualize random solutions of the indexer.

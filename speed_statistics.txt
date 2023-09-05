@@ -1,0 +1,13 @@
+GPU:NVIDIA A100 80GB PCIe, model:precise, batch_size:30. Average number of frames per second: 232.25 f/s, Standard Deviation: 35.38 f/s
+GPU:NVIDIA A100 80GB PCIe, model:precise, batch_size:50. Average number of frames per second: 319.85 f/s, Standard Deviation: 1.91 f/s
+GPU:NVIDIA A100 80GB PCIe, model:precise, batch_size:70. Average number of frames per second: 324.38 f/s, Standard Deviation: 5.96 f/s
+GPU:NVIDIA A100 80GB PCIe, model:precise, batch_size:100. Average number of frames per second: 332.64 f/s, Standard Deviation: 3.12 f/s
+GPU:NVIDIA A100 80GB PCIe, model:middle, batch_size:100. Average number of frames per second: 639.68 f/s, Standard Deviation: 4.63 f/s
+GPU:NVIDIA A100 80GB PCIe, model:middle, batch_size:150. Average number of frames per second: 653.97 f/s, Standard Deviation: 38.23 f/s
+GPU:NVIDIA A100 80GB PCIe, model:middle, batch_size:200. Average number of frames per second: 667.59 f/s, Standard Deviation: 2.49 f/s
+GPU:NVIDIA A100 80GB PCIe, model:fast, batch_size:200. Average number of frames per second: 1847.89 f/s, Standard Deviation: 7.73 f/s
+GPU:NVIDIA A100 80GB PCIe, model:fast, batch_size:250. Average number of frames per second: 1864.35 f/s, Standard Deviation: 10.23 f/s
+GPU:NVIDIA A100 80GB PCIe, model:fast, batch_size:300. Average number of frames per second: 1980.43 f/s, Standard Deviation: 552.06 f/s
+GPU:NVIDIA A100 80GB PCIe, model:insane, batch_size:200. Average number of frames per second: 3420.90 f/s, Standard Deviation: 69.01 f/s
+GPU:NVIDIA A100 80GB PCIe, model:insane, batch_size:300. Average number of frames per second: 3786.45 f/s, Standard Deviation: 860.41 f/s
+GPU:NVIDIA A100 80GB PCIe, model:insane, batch_size:400. Average number of frames per second: 3726.42 f/s, Standard Deviation: 51.02 f/s

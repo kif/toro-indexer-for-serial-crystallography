@@ -157,10 +157,10 @@ for path in mylist:
         # Compute average and standard deviation of the time taken
         avg_fs = sum(frames_per_second) / len(frames_per_second)
         std_dev = (sum((x - avg_fs) ** 2 for x in frames_per_second) / len(frames_per_second)) ** 0.5
-        print(f"Average number of frames per second: %.2f f/s, Standard Deviation: %.2f f/s" % (avg_fs, std_dev))
+        if torch.cuda.is_available():
+            line = f"GPU:{torch.cuda.get_device_name(device)}, model:{args['model']}, batch_size:{args['batch_size']}. Average number of frames per second: {avg_fs:.2f} f/s, Standard Deviation: {std_dev:.2f} f/s"
+        else:
+            line = f"CPU, model:{args['model']}, batch_size:{args['batch_size']}. Average number of frames per second: {avg_fs:.2f} f/s, Standard Deviation: {std_dev:.2f} f/s"
+        print(line)
         with open("speed_statistics.txt", 'a+') as f:
-            if torch.cuda.is_available():
-                line = f"GPU:{torch.cuda.get_device_name(device)}, model:{args['model']}, batch_size:{args['batch_size']}. Average number of frames per second: {avg_fs:.2f} f/s, Standard Deviation: {std_dev:.2f} f/s"
-            else:
-                line = f"CPU, model:{args['model']}, batch_size:{args['batch_size']}. Average number of frames per second: {avg_fs:.2f} f/s, Standard Deviation: {std_dev:.2f} f/s"
             f.write(line + '\n')

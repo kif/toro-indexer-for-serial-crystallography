@@ -343,3 +343,4 @@ tags
 .idea/inspectionProfiles/Project_Default.xml
 .idea/inspectionProfiles/profiles_settings.xml
 notebooks/traced_index_model.pt
+run.sh
