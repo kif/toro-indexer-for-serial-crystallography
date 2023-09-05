@@ -25,6 +25,7 @@ parser.add_argument("--model", type=str, choices={precise, middle, fast, insane}
 parser.add_argument("--batch_size", type=int, default=50, help="Choose the largest batch size that fits in your GPU.")
 parser.add_argument("--speed_test", action='store_true',
                     help="Activate when testing speed to remove uneccesary actions, no results will be stored, only the speed will be shown")
+parser.add_argument("--cpu", action='store_true', help="Run in CPU instead of GPU")
 args = vars(parser.parse_args())
 
 cwd = os.getcwd()
@@ -34,6 +35,8 @@ mylist = glob.glob(streams_path + '/*.stream', recursive=True)
 print("List of stream files to be used", mylist)
 
 device = torch.device('cuda') if torch.cuda.is_available() else 'cpu'
+if args['cpu']:
+    device = torch.device('cpu')
 print("Using device ", device)
 
 spot_sequence_length = 80

@@ -5,10 +5,6 @@ from torch.nn.functional import normalize
 import sys
 
 
-def nonNan(x):
-    return x[~x.isnan()]
-
-
 def batched_invert_matrix(matrices):
     """
     Compute the batched pseudo-inverse of a set of 3x3 matrices using analytical expressions.
@@ -31,40 +27,6 @@ def batched_invert_matrix(matrices):
     entries *= det[:, None]
     entries = entries.reshape(-1, 3, 3)
     return entries.unflatten(0, [first, second])
-    # return torch.linalg.pinv(matrices)
-
-
-#     tol = 1e-9
-#     first, second = matrices.shape[0], matrices.shape[1]
-#     matrices = matrices.reshape(-1, 3, 3)
-
-#     # Calculate determinants for 3x3 matrices in the batch
-#     det = matrices[:, 0, 0] * (matrices[:, 1, 1] * matrices[:, 2, 2] - matrices[:, 1, 2] * matrices[:, 2, 1]) - \
-#           matrices[:, 0, 1] * (matrices[:, 1, 0] * matrices[:, 2, 2] - matrices[:, 1, 2] * matrices[:, 2, 0]) + \
-#           matrices[:, 0, 2] * (matrices[:, 1, 0] * matrices[:, 2, 1] - matrices[:, 1, 1] * matrices[:, 2, 0])
-
-#     # Create an empty tensor to store the batched pseudo-inverse
-#     batch_size = matrices.shape[0]
-#     pseudo_inv = torch.zeros_like(matrices, device=matrices.device, dtype=matrices.dtype)
-
-#     # Compute adjoint of the matrix for all batches
-#     adjoint = torch.zeros_like(matrices, device=matrices.device, dtype=matrices.dtype)
-#     adjoint[:, 0, 0] = matrices[:, 1, 1] * matrices[:, 2, 2] - matrices[:, 1, 2] * matrices[:, 2, 1]
-#     adjoint[:, 0, 1] = matrices[:, 0, 2] * matrices[:, 2, 1] - matrices[:, 0, 1] * matrices[:, 2, 2]
-#     adjoint[:, 0, 2] = matrices[:, 0, 1] * matrices[:, 1, 2] - matrices[:, 0, 2] * matrices[:, 1, 1]
-#     adjoint[:, 1, 0] = matrices[:, 1, 2] * matrices[:, 2, 0] - matrices[:, 1, 0] * matrices[:, 2, 2]
-#     adjoint[:, 1, 1] = matrices[:, 0, 0] * matrices[:, 2, 2] - matrices[:, 0, 2] * matrices[:, 2, 0]
-#     adjoint[:, 1, 2] = matrices[:, 0, 2] * matrices[:, 1, 0] - matrices[:, 0, 0] * matrices[:, 1, 2]
-#     adjoint[:, 2, 0] = matrices[:, 1, 0] * matrices[:, 2, 1] - matrices[:, 1, 1] * matrices[:, 2, 0]
-#     adjoint[:, 2, 1] = matrices[:, 0, 1] * matrices[:, 2, 0] - matrices[:, 0, 0] * matrices[:, 2, 1]
-#     adjoint[:, 2, 2] = matrices[:, 0, 0] * matrices[:, 1, 1] - matrices[:, 0, 1] * matrices[:, 1, 0]
-
-#     # Compute the pseudo-inverse using the formula: adjoint / determinant
-#     det_inv = 1.0 / det
-#     det_inv *= (torch.abs(det) >= tol)  # Handle singular matrices by setting their inverse determinant to zero
-#     pseudo_inv = adjoint * det_inv.view(-1, 1, 1)
-
-#     return pseudo_inv.unflatten(0, [first, second])
 
 
 def batched_regression(A, B):
@@ -79,7 +41,6 @@ def batched_regression(A, B):
     XXX = XX @ X.permute(0, 1, 3, 2)
     matrix = XXX @ B
     return matrix
-    # return torch.linalg.lstsq(A + 1e-9 * torch.randn_like(A), B)[0]
 
 
 def rotations(rodrigues_vector, alpha, angle_resolution: int):
@@ -237,9 +198,11 @@ class ToroIndexer(nn.Module):
         Creates an instance of the TORO indexer module
         @param lattice_size: The number of samples from the unit sphere to be considered during the first phase of TORO
         @param num_iterations: The number of error-annealing iterations to be used in the fitting
-        @param error_precision: The precision
-        @param filter_precision:
-        @param filter_min_num_spots:
+        @param error_precision: The precision of a solution in reciprocal space
+        @param filter_precision: When filtering solutions, we ask usually for more precision on fewr spots,
+        this paramter specifies it.
+        @param filter_min_num_spots: The min number of spots of high precision that a solution should have,
+        this is only taken into account during the filtering phase after indexing is completed.
         """
         super(ToroIndexer, self).__init__()
         self.type = torch.float32
@@ -561,7 +524,10 @@ class ToroIndexer(nn.Module):
             masked_source = peaks * source_mask[..., None]
             targets = torch.round(masked_source @ bases.transpose(-2, -1))
             # The regression intrinsically ignores all zero vectors that have zero targets as their residual is zero
-            transposed_bases = batched_regression(masked_source, targets)
+            if peaks.device == torch.device('cpu'):
+                transposed_bases = torch.linalg.lstsq(masked_source, targets)[0]
+            else:
+                transposed_bases = batched_regression(masked_source, targets)
 
             bases = transposed_bases.transpose(-2, -1)
 
