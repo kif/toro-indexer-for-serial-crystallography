@@ -38,6 +38,7 @@ device = torch.device('cuda') if torch.cuda.is_available() else 'cpu'
 if args['cpu']:
     device = torch.device('cpu')
 print("Using device ", device)
+torch.set_num_threads(10)
 
 spot_sequence_length = 80
 
