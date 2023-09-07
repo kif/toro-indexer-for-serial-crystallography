@@ -13,8 +13,7 @@ def batched_invert_matrix(matrices):
     Returns:
         Tensor: The batched pseudo-inverse with shape (batch_size, 3, 3)
     """
-
-    first, second = int(matrices.shape[0]), int(matrices.shape[1])
+    matrix_shape = matrices.shape
     M = matrices.reshape(-1, 9)
     # M += 1e-12 * torch.randn_like(M)
     a, b, c, d, e, f, g, h, i = [x.squeeze(-1) for x in torch.split(M, [1 for _ in range(9)], dim=-1)]
@@ -24,21 +23,19 @@ def batched_invert_matrix(matrices):
                            a * i - c * g, c * d - a * f, d * h - e * g, b * g - a * h, a * e - b * d], dim=1)
     entries *= det[:, None]
     entries = entries.reshape(-1, 3, 3)
-    return entries.unflatten(0, [first, second])
+    return entries.reshape(matrix_shape)
 
 
-def batched_regression(A, B):
+def batched_regression(X, B):
     """
     Same as torch.linalg.lstsq but handles degenerate cases without an error. Solves least squares with min ||Ax - B||
-    @param A: Input
+    @param X: Input
     @param B: Targets
     @return: The closed form solution of the least squares instance
     """
-    X = A
-    XX = batched_invert_matrix(X.permute(0, 1, 3, 2) @ X)
-    XXX = XX @ X.permute(0, 1, 3, 2)
-    matrix = XXX @ B
-    return matrix
+    XX = batched_invert_matrix(X.transpose(-2, -1) @ X)
+    XXX = XX @ X.transpose(-2, -1)
+    return XXX @ B
 
 
 def rotations(rodrigues_vector, alpha, angle_resolution: int):
@@ -239,59 +236,57 @@ class ToroIndexer(nn.Module):
         initial_cell = initial_cell.to(device)
         # We obtain the dot product of the sampled vectors on the unit sphere and our reciprocal peaks once
         unit_projections = self.unite_sphere_lattice @ peaks.flatten(0, 1).T
-        unit_projections = unit_projections.unflatten(1, [bs, -1]).permute(1, 0, 2)
+        unit_projections = unit_projections.unflatten(1, [bs, -1]).transpose(0, 1)
 
         # We use the information of the dot products with the unit
         # sphere to generate the dot products with the scaled sphere vectors
         projections = torch.stack([unit_projections * factor for factor in scaling], 0)
         h = torch.round(projections)
 
-        # We explicitly create the candidates from the unit sphere mapping by triplicating it
-        # and then scaling it accordingly
-        unit_candidates = self.unite_sphere_lattice.expand(bs, 3, len(self.unite_sphere_lattice), 3)
-        unit_candidates = unit_candidates * scaling[None, :, None, None]
-        unit_candidates = unit_candidates.flatten(1, 2)
-
         diff = torch.abs(projections - h)
         is_inlier = diff <= dist_to_integer
         is_inlier &= (torch.sum(torch.abs(peaks), dim=-1) != 0)[None, :, None, :]
-
         combined_loss = torch.sum(is_inlier, dim=-1)
         indices = combined_loss.int().sort(descending=True, dim=-1).indices[:, :, 0: num_top_solutions].to(device)
-        expanded_candidates = unit_candidates.unflatten(1, [3, -1]).permute(1, 0, 2, 3).flatten(0, 1)
-        all_candidates = batched_subset_from_indices(expanded_candidates, indices.flatten(0, 1)).unflatten(0, [3, -1])
+
+        # We explicitly create the candidates from the unit sphere mapping by triplicating it
+        # and then scaling it accordingly
+        unit_candidates = self.unite_sphere_lattice.expand(3, bs, len(self.unite_sphere_lattice), 3)
+        expanded_candidates = (unit_candidates * scaling[:, None, None, None])
+        all_candidates = batched_subset_from_indices(expanded_candidates.flatten(0, 1), indices.flatten(0, 1)).unflatten(0, [3, -1])
+        all_candidates = all_candidates.transpose(0, 1)
 
         # We perform a Trimmed Least Squares method with error threshold annealing to find the best vectors
         for d in [0.1, 0.05, 0.025, 0.01]:
-            projections = torch.bmm(all_candidates.permute(1, 0, 2, 3).flatten(1, 2), peaks.permute(0, 2, 1))
-            projections = projections.unflatten(1, [3, -1]).permute(1, 0, 2, 3)
+            projections = torch.bmm(all_candidates.flatten(1, 2), peaks.transpose(1, 2))
+            projections = projections.unflatten(1, [3, num_top_solutions]).transpose(0, 1)
 
             h = torch.round(projections)
             mask = torch.abs(h - projections) < d
 
-            flat_h = h.permute(1, 0, 2, 3).reshape(bs, 3 * all_candidates.shape[2], -1).unsqueeze(-1)
-            flat_mask = mask.permute(1, 0, 2, 3).reshape(bs, 3 * all_candidates.shape[2], -1)
-            expanded_peaks = peaks.expand(3, all_candidates.shape[2], bs, -1, 3).permute(2, 0, 1, 3, 4).reshape(
-                bs, 3 * all_candidates.shape[2], -1, 3)
+            flat_h = h.transpose(0, 1).reshape(bs, 3 * num_top_solutions, -1).unsqueeze(-1)
+            flat_mask = mask.transpose(0, 1).reshape(bs, 3 * num_top_solutions, -1)
+            expanded_peaks = peaks.expand(3, num_top_solutions, bs, -1, 3).permute(2, 0, 1, 3, 4)
+            expanded_peaks = expanded_peaks.reshape(bs, 3 * num_top_solutions, -1, 3)
 
             # Use a fitting but with a mask that takes only into account points closer to their target
             if peaks.device == torch.device('cpu'):
                 refined_candidates = torch.linalg.lstsq(
-                    expanded_peaks * flat_mask[:, :, :, None], flat_h * flat_mask[:, :, :, None]
+                    expanded_peaks * flat_mask[..., None], flat_h * flat_mask[..., None]
                 )[0]
             else:
                 refined_candidates = batched_regression(
-                    expanded_peaks * flat_mask[:, :, :, None], flat_h * flat_mask[:, :, :, None]
+                    expanded_peaks * flat_mask[..., None], flat_h * flat_mask[..., None]
                 )  # solutions is flatten bs, 3, len(unite_lattice)
-            all_candidates = refined_candidates.unflatten(1, [3, -1]).squeeze(-1).transpose(0, 1)
+            all_candidates = refined_candidates.unflatten(1, [3, -1]).squeeze(-1)
+        all_candidates = all_candidates.transpose(0, 1)
 
-        # After TLS, we score anr rank the resulting vectors and take only the top num_top_solutions
+        # After TLS, we score and rank the resulting vectors and take only the top num_top_solutions
         diff = torch.abs(projections - h)
         is_inlier = diff <= 0.01
         is_inlier &= (torch.sum(torch.abs(peaks), dim=-1) != 0)[None, :, None, :]
         combined_loss = torch.sum(is_inlier.int(), dim=-1, dtype=torch.int)
-        indices = combined_loss.int().sort(descending=True, dim=-1).indices[:, :, 0:num_top_solutions].to(
-            device)
+        indices = combined_loss.int().sort(descending=True, dim=-1).indices[..., :num_top_solutions].to(device)
         expanded_candidates = all_candidates.flatten(0, 1)
         all_candidates = batched_subset_from_indices(expanded_candidates, indices.flatten(0, 1)).unflatten(0, [3, -1])
 
@@ -481,11 +476,7 @@ class ToroIndexer(nn.Module):
             masked_peaks = peaks * peaks_mask[..., None]
             targets = torch.round(masked_peaks @ bases.transpose(-2, -1))
             # The regression intrinsically ignores all zero vectors that have zero targets as their residual is zero
-            if peaks.device == torch.device('cpu'):
-                transposed_bases = torch.linalg.lstsq(masked_peaks, targets)[0]
-            else:
-                transposed_bases = batched_regression(masked_peaks, targets)
-
+            transposed_bases = torch.linalg.lstsq(masked_peaks, targets)[0] if peaks.device == torch.device('cpu') else batched_regression(masked_peaks, targets)
             bases = transposed_bases.transpose(-2, -1)
 
             # we compute now the inverse of the targets in reciprocal space which will be compared against peaks
