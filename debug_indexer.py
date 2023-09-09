@@ -853,3 +853,14 @@ for batch_successes, batch_bases, batch_indices, batch_errors in zip(
         # print("Miller indices:")
         # print((miller_indices * solution_mask[:, None]).p)
         break
+
+# 28 num spots in solution
+# 69 num spots in solution
+# 41 num spots in solution
+# 48 num spots in solution
+# 78 num spots in solution
+# 45 num spots in solution
+# 48 num spots in solution
+# 57 num spots in solution
+# 38 num spots in solution
+# 47 num spots in solution

@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
-import math
 from torch.nn.functional import normalize
+import math
 
 
 def batched_invert_matrix(matrices):
@@ -85,15 +85,16 @@ def bcompute_penalization(matrix, initial_cell):
     diff_cell = torch.abs(
         matrix.norm(dim=-1, p=2) - initial_cell.norm(dim=-1, p=2).to(matrix.device)
     )
+    # we take the maximum difference among the norm of the 3 different vectors of the basis
     total_diff_cell = torch.max(diff_cell, dim=-1).values.to(matrix.device, dtype=dtype)
-    penalization = torch.max(torch.tensor(0, dtype=dtype, device=matrix.device), total_diff_cell) ** 3
+    penalization = torch.max(torch.tensor(0, dtype=dtype, device=matrix.device), total_diff_cell-1) ** 3
 
     # we also penalize according to angle discrepancies
     angles = batched_compute_angles(matrix)  # n x 3
     angles_diff = torch.abs(
         angles - batched_compute_angles(initial_cell.unsqueeze(0))[0].to(matrix.device, dtype=dtype))
     total_diff_angles = torch.max(angles_diff, dim=-1).values.to(matrix.device, dtype=dtype)
-    penalization += torch.max(torch.tensor(0, dtype=dtype, device=matrix.device), total_diff_angles) ** 3
+    penalization += torch.max(torch.tensor(0, dtype=dtype, device=matrix.device), total_diff_angles-1) ** 3
     return penalization.unflatten(0, [first, second])
 
 
@@ -112,7 +113,6 @@ def batched_subset_from_indices(input, indices):
     return torch.gather(input.reshape(bs, input.shape[1], -1), 1, indices.repeat(numel, 1, 1).permute(1, 2, 0)).reshape(
         shape_output)
 
-
 def create_sphere_lattice(num_points: int = 1000000):
     """
     Samples num_points vectors from the unit sphere using the golden ratio spiral.
@@ -124,26 +124,8 @@ def create_sphere_lattice(num_points: int = 1000000):
     theta = 2 * torch.pi * i / goldenRatio
     phi = torch.arccos(1 - 2 * (i + 0.5) / num_points)
     x, y, z = torch.cos(theta) * torch.sin(phi), torch.sin(theta) * torch.sin(phi), torch.cos(phi)
-    lattice = torch.randn(num_points, 3)
-    lattice[:, 0] = x
-    lattice[:, 1] = y
-    lattice[:, 2] = z
-    return lattice
+    lattice =  torch.stack([x, y, z], 1)
     return lattice[lattice[:, -1] >= 0]
-
-
-from numpy import arange, pi, sin, cos, arccos
-def create_sphere_lattice(num_points: int = 1000000):
-    goldenRatio = (1 + 5 ** 0.5) / 2
-    i = arange(0, num_points)
-    theta = 2 * pi * i / goldenRatio
-    phi = arccos(1 - 2 * (i + 0.5) / num_points)
-    x, y, z = cos(theta) * sin(phi), sin(theta) * sin(phi), cos(phi);
-    lattice = torch.randn(num_points, 3)
-    lattice[:, 0] = torch.FloatTensor(x)
-    lattice[:, 1] = torch.FloatTensor(y)
-    lattice[:, 2] = torch.FloatTensor(z)
-    return lattice
 
 
 def to_skew_symmetric(x):
@@ -247,7 +229,7 @@ class ToroIndexer(nn.Module):
         is_inlier = diff <= dist_to_integer
         is_inlier &= (torch.sum(torch.abs(peaks), dim=-1) != 0)[None, :, None, :]
         combined_loss = torch.sum(is_inlier, dim=-1)
-        indices = combined_loss.int().sort(descending=True, dim=-1).indices[:, :, 0: num_top_solutions].to(device)
+        indices = combined_loss.int().sort(descending=True, dim=-1).indices[..., : num_top_solutions].to(device)
 
         # We explicitly create the candidates from the unit sphere mapping by triplicating it
         # and then scaling it accordingly
@@ -413,31 +395,35 @@ class ToroIndexer(nn.Module):
             solution_peaks = []
 
             # we take the solution with the maximum number of inlier spots, but penalized
-            solution_instance = torch.argmax(torch.sum(peaks_mask, dim=-1).int() - penalization, dim=-1)
-
+            # we take the solution with the maximum number of inlier spots, but penalized
+            penalized_scores = torch.sum(peaks_mask, dim=-1).int() - penalization
+            penalized_scores[penalized_scores.isnan()] = 0
+            max_index_per_batch = torch.argmax(penalized_scores, dim=-1).unsqueeze(1)
+            # While at least one batch has a solution with at least min_num_spots
             while torch.max(
-                    torch.sum(batched_subset_from_indices(peaks_mask, solution_instance.unsqueeze(1)).squeeze(1),
-                              dim=-1)).int() > min_num_spots:
+                    torch.sum(batched_subset_from_indices(peaks_mask, max_index_per_batch).squeeze(1),dim=-1)
+            ).int() > min_num_spots:
                 # We now find the best solution
-                solution_instance = torch.argmax(torch.sum(peaks_mask, dim=-1).int(), dim=-1)
-                solution_bases.append(batched_subset_from_indices(top_bases, solution_instance.unsqueeze(1)).squeeze(1))
-                solution_masks.append(batched_subset_from_indices(peaks_mask, solution_instance.unsqueeze(1)).squeeze(1))
-                solution_peaks.append(batched_subset_from_indices(repeated_peaks, solution_instance.unsqueeze(1)).squeeze(1))
-                solution_errors.append(batched_subset_from_indices(error, solution_instance.unsqueeze(1)).squeeze(1))
-                solution_penalization.append(batched_subset_from_indices(penalization, solution_instance.unsqueeze(1)).squeeze(1))
+                solution_bases.append(batched_subset_from_indices(top_bases, max_index_per_batch).squeeze(1))
+                solution_masks.append(batched_subset_from_indices(peaks_mask, max_index_per_batch).squeeze(1))
+                solution_peaks.append(batched_subset_from_indices(repeated_peaks, max_index_per_batch).squeeze(1))
+                solution_errors.append(batched_subset_from_indices(error, max_index_per_batch).squeeze(1))
+                solution_penalization.append(batched_subset_from_indices(penalization, max_index_per_batch).squeeze(1))
 
                 # we turn to zeros the locations of peaks_mask of the spots belonging to the stored solution
                 peaks_mask *= (~solution_masks[-1])[:, None, :]
-                solution_instance = torch.argmax(torch.sum(peaks_mask, dim=-1).int() - penalization, dim=-1)
+                penalized_scores = torch.sum(peaks_mask, dim=-1).int() - penalization
+                penalized_scores[penalized_scores.isnan()] = 0
+                max_index_per_batch = torch.argmax(penalized_scores, dim=-1).unsqueeze(1)
 
             if not solution_bases:
                 return torch.zeros(0), torch.zeros(0), torch.zeros(0), torch.zeros(0), torch.zeros(0)
 
+            # we are stacking the different crystal solutions into the dimension 1
             solution_bases = torch.stack(solution_bases, 1)
             solution_masks = torch.stack(solution_masks, 1)
             solution_errors = torch.stack(solution_errors, 1)
             solution_penalization = torch.stack(solution_penalization, 1)
-            solution_peaks = torch.stack(solution_peaks, 1)
             peaks_for_filtering = peaks.repeat(int(solution_bases.shape[1]), 1, 1, 1).transpose(0, 1)
 
             solution_successes = self.bfilter_solution(
