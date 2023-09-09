@@ -29,7 +29,7 @@ parser.add_argument("--cpu", action='store_true', help="Run in CPU instead of GP
 args = vars(parser.parse_args())
 
 cwd = os.getcwd()
-streams_path = cwd + "/data/lyso_12p4kev_1khz_150mm_run000026"
+streams_path = cwd + "/data/lyso"
 # streams_path = cwd+"/data/performance_test"
 mylist = glob.glob(streams_path + '/*.stream', recursive=True)
 print("List of stream files to be used", mylist)
