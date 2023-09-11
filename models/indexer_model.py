@@ -170,7 +170,7 @@ def rotation_to_target(peaks, targets):
 
 class ToroIndexer(nn.Module):
     def __init__(self, lattice_size, num_iterations: int = 5, error_precision: float = 0.0015,
-                 filter_precision: float = 0.00075, filter_min_num_spots: int = 6):
+                 filter_precision: float = 0.00075, filter_min_num_spots: int = 6, dtype=torch.float32):
         """
         Creates an instance of the TORO indexer module
         @param lattice_size: The number of samples from the unit sphere to be considered during the first phase of TORO
@@ -180,14 +180,17 @@ class ToroIndexer(nn.Module):
         this paramter specifies it.
         @param filter_min_num_spots: The min number of spots of high precision that a solution should have,
         this is only taken into account during the filtering phase after indexing is completed.
+        @dtype the type of data that should be used to process data, default is float32 but half or float64 are also possible.
         """
         super(ToroIndexer, self).__init__()
-        self.type = torch.float32
         self.register_buffer('unite_sphere_lattice', create_sphere_lattice(num_points=lattice_size))
         self.filter_precision = float(filter_precision)
         self.filter_min_num_spots = int(filter_min_num_spots)
         self.error_precision = float(error_precision)
         self.num_iterations = int(num_iterations)
+        self.dtype = dtype
+        self.to(dtype=dtype)
+
 
     def sample_bases(
             self,
@@ -213,9 +216,9 @@ class ToroIndexer(nn.Module):
 
         device = peaks.device
         bs = int(peaks.shape[0])
-        scaling = initial_cell.norm(dim=-1, p=2).to(device, dtype=self.type)
+        scaling = initial_cell.norm(dim=-1, p=2).to(device, dtype=self.dtype)
         self.unite_sphere_lattice = self.unite_sphere_lattice.to(device)
-        initial_cell = initial_cell.to(device)
+        initial_cell = initial_cell.to(device, dtype=self.dtype)
         # We obtain the dot product of the sampled vectors on the unit sphere and our reciprocal peaks once
         unit_projections = self.unite_sphere_lattice @ peaks.flatten(0, 1).T
         unit_projections = unit_projections.unflatten(1, [bs, -1]).transpose(0, 1)
@@ -252,15 +255,11 @@ class ToroIndexer(nn.Module):
             expanded_peaks = expanded_peaks.reshape(bs, 3 * num_top_solutions, -1, 3)
 
             # Use a fitting but with a mask that takes only into account points closer to their target
-            if peaks.device == torch.device('cpu'):
-                refined_candidates = torch.linalg.lstsq(
-                    expanded_peaks * flat_mask[..., None], flat_h * flat_mask[..., None]
-                )[0]
-            else:
-                refined_candidates = batched_regression(
-                    expanded_peaks * flat_mask[..., None], flat_h * flat_mask[..., None]
-                )  # solutions is flatten bs, 3, len(unite_lattice)
+            refined_candidates = batched_regression(
+                expanded_peaks * flat_mask[..., None], flat_h * flat_mask[..., None]
+            )
             all_candidates = refined_candidates.unflatten(1, [3, -1]).squeeze(-1)
+
         all_candidates = all_candidates.transpose(0, 1)
 
         # After TLS, we score and rank the resulting vectors and take only the top num_top_solutions
@@ -279,7 +278,7 @@ class ToroIndexer(nn.Module):
             permutation = [i, (i + 1) % 3, (i + 2) % 3]
             inverse_permutation = [(i + i) % 3, (i + 1 + i) % 3, (i + 2 + i) % 3]
             current_cell = initial_cell[permutation, :]
-            all_basis = current_cell.repeat(candidates.shape[0], candidates.shape[1], 1, 1).to(device, dtype=self.type)
+            all_basis = current_cell.repeat(candidates.shape[0], candidates.shape[1], 1, 1).to(device, dtype=self.dtype)
 
             R = rotation_to_target(all_basis[:, :, 0].flatten(0, 1), candidates.flatten(0, 1))
             bases = torch.bmm(R, all_basis.flatten(0, 1).transpose(1, 2)).permute(0, 2, 1)
@@ -340,14 +339,15 @@ class ToroIndexer(nn.Module):
         @param min_num_spots: the minimum number of spots that a valid solution most have
         @param angle_resolution: The number of samples used to rotate the given bases
         @param num_top_solutions: The number of candidate solutions to be considered by the algorithm
-        @return: solution_successes (boolean vector of size bs x num_crystals),
+        @return:
+        solution_successes (boolean vector of size bs x num_crystals),
         solution_bases (solution cells bs x num_crystals x 3 x 3),
         solution_masks (boolean mask of peaks indicating elements of each solution bs x num_crystals x num_points) ,
         solution_errors (float tensor with the error of the solutions bs x num_crystals) ,
         solution_penalization (float tensor with the penalization used in the solutions bs x num_crystals)
         """
-        self.type = next(self.buffers()).dtype
         with torch.no_grad():
+            peaks = peaks.to(dtype=self.dtype)
             # fixed hyperparameter
             valid_integer_projection_radius = float(0.2)
 
@@ -455,14 +455,14 @@ class ToroIndexer(nn.Module):
         start = 0.01
         base = 2 ** (math.log(self.error_precision * 100) / ((num_iterations - 1) * math.log(2)))
         error_bounds = [float(start * base ** i) for i in range(num_iterations)]  # min error is 0.002
-        error = torch.zeros_like(peaks_mask, dtype=self.type)
+        error = torch.zeros_like(peaks_mask, dtype=self.dtype)
         non_zero_mask = torch.sum(torch.abs(peaks), dim=-1) != 0
         for round in range(num_iterations):
             # We turn to zeros the locations that should not be considered for fitting
             masked_peaks = peaks * peaks_mask[..., None]
             targets = torch.round(masked_peaks @ bases.transpose(-2, -1))
             # The regression intrinsically ignores all zero vectors that have zero targets as their residual is zero
-            transposed_bases = torch.linalg.lstsq(masked_peaks, targets)[0] if peaks.device == torch.device('cpu') else batched_regression(masked_peaks, targets)
+            transposed_bases = batched_regression(masked_peaks, targets)
             bases = transposed_bases.transpose(-2, -1)
 
             # we compute now the inverse of the targets in reciprocal space which will be compared against peaks

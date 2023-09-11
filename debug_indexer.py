@@ -854,6 +854,10 @@ for batch_successes, batch_bases, batch_indices, batch_errors in zip(
         # print((miller_indices * solution_mask[:, None]).p)
         break
 
+# #saving the model for C++
+# sm = torch.jit.script(im)
+# sm.save("traced_index_model.pt")
+
 # 28 num spots in solution
 # 69 num spots in solution
 # 41 num spots in solution

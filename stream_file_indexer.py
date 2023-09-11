@@ -99,10 +99,9 @@ for path in mylist:
     with torch.no_grad():
         if args["speed_test"]:
             # Initialize CUDA events
-            if torch.cuda.is_available():
+            if not args['cpu']:
                 start_event = torch.cuda.Event(enable_timing=True)
                 end_event = torch.cuda.Event(enable_timing=True)
-
             # Warm-up
             im(
                 torch.randn(5, 80, 3, device=device),
@@ -117,7 +116,7 @@ for path in mylist:
         for source, indices in tqdm(dataset):
             source = source.to(device)
             if args["speed_test"]:
-                if torch.cuda.is_available():
+                if not args['cpu']:
                     start_event.record()
                 else:
                     start_time = time.perf_counter()
@@ -129,7 +128,7 @@ for path in mylist:
                 num_top_solutions=num_top_solutions
             )
             if args["speed_test"]:
-                if torch.cuda.is_available():
+                if not args['cpu']:
                     end_event.record()
                     # Wait for the events to be recorded
                     torch.cuda.synchronize()
@@ -153,15 +152,19 @@ for path in mylist:
     if not args["speed_test"]:
         found_indices = torch.stack(solution_indices_list)
         found_triples = torch.stack(solution_triples_list)
+        if not args['cpu']:
+            name = f"GPU_{torch.cuda.get_device_name(device)}_model_{args['model']}_batch_size_{args['batch_size']}"
+        else:
+            name = f"CPU_model_{args['model']}_batch_size_{args['batch_size']}"
         np.save("solution_indices", found_indices.to('cpu').numpy())
         np.save("solution_matrices", found_triples.to('cpu').numpy())
         print(len(solution_triples_list), " found out of ", len(mds))
-        print("Solutions have been saved, you can view them using the provided notebook: results_visualization.ipynb")
+        print("Solutions have been saved, you can visualize them using the provided notebook: results_visualization.ipynb")
     else:
         # Compute average and standard deviation of the time taken
         avg_fs = sum(frames_per_second) / len(frames_per_second)
         std_dev = (sum((x - avg_fs) ** 2 for x in frames_per_second) / len(frames_per_second)) ** 0.5
-        if torch.cuda.is_available():
+        if not args['cpu']:
             line = f"GPU:{torch.cuda.get_device_name(device)}, model:{args['model']}, batch_size:{args['batch_size']}. Average number of frames per second: {avg_fs:.2f} f/s, Standard Deviation: {std_dev:.2f} f/s"
         else:
             line = f"CPU, model:{args['model']}, batch_size:{args['batch_size']}. Average number of frames per second: {avg_fs:.2f} f/s, Standard Deviation: {std_dev:.2f} f/s"
