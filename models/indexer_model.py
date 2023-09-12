@@ -176,7 +176,7 @@ class ToroIndexer(nn.Module):
         @param lattice_size: The number of samples from the unit sphere to be considered during the first phase of TORO
         @param num_iterations: The number of error-annealing iterations to be used in the fitting
         @param error_precision: The precision of a solution in reciprocal space
-        @param filter_precision: When filtering solutions, we ask usually for more precision on fewr spots,
+        @param filter_precision: When filtering solutions, we ask ask for high precision on fewer spots in order to accept an indexing,
         this paramter specifies it.
         @param filter_min_num_spots: The min number of spots of high precision that a solution should have,
         this is only taken into account during the filtering phase after indexing is completed.
@@ -313,20 +313,20 @@ class ToroIndexer(nn.Module):
 
         return scores, hkl, is_inlier
 
-    def bfilter_solution(self, base, peaks, precision: float, min_num_spots: int):
+    def bfilter_solution(self, bases, masked_peaks, precision: float, min_num_spots: int):
         """
         Decides if the pair base, inliers makes a valid solution or not according to their error
-        @param base: bs x 3 x 3 with a, b and c as row vectors in primal space.
-        @param peaks: bs x k x 3 with k < n the set of spots indexed by base projected on the Ewald sphere in reciprocal space.
+        @param bases: bs x 3 x 3 with a, b and c as row vectors in primal space.
+        @param masked_peaks: bs x k x 3 with k < n the set of spots indexed by base projected on the Ewald sphere in reciprocal space.
         @param min_num_spots: minimum number of spots of a valid solution
         @param precision: The precision of a valid solution
         @return: Sucess flag for each of the batches of base, i.e., a boolean vector of size bs
         """
-        non_zero_mask = torch.sum(peaks ** 2, dim=-1) != 0
-        predictions = torch.bmm(peaks, base.transpose(-2, -1))
+        non_zero_mask = torch.sum(torch.abs(masked_peaks), dim=-1) != 0
+        predictions = torch.bmm(masked_peaks, bases.transpose(-2, -1))
         hkl = torch.round(predictions)
-        back_points = torch.bmm(hkl, batched_invert_matrix(base.unsqueeze(0)).squeeze(0).transpose(-2, -1))
-        errors = (peaks - back_points).norm(dim=-1, p=2)
+        back_points = torch.bmm(hkl, batched_invert_matrix(bases.unsqueeze(0)).squeeze(0).transpose(-2, -1))
+        errors = (masked_peaks - back_points).norm(dim=-1, p=2)
         mask = errors < precision
         mask &= non_zero_mask
         return torch.sum(mask, dim=-1) >= min_num_spots
@@ -428,7 +428,7 @@ class ToroIndexer(nn.Module):
 
             solution_successes = self.bfilter_solution(
                 solution_bases.flatten(0, 1),
-                peaks_for_filtering.flatten(0, 1) * solution_masks.flatten(0, 1)[:, :, None],
+                masked_peaks=peaks_for_filtering.flatten(0, 1) * solution_masks.flatten(0, 1)[:, :, None],
                 precision=self.filter_precision,
                 min_num_spots=self.filter_min_num_spots
             ).unflatten(0, [bs, -1])
