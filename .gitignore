@@ -345,3 +345,7 @@ tags
 notebooks/traced_index_model.pt
 run.sh
 traced_index_model.pt
+traced_model_fast.pt
+traced_model_insane.pt
+traced_model_middle.pt
+traced_model_precise.pt

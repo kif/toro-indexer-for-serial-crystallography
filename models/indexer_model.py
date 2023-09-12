@@ -15,7 +15,6 @@ def batched_invert_matrix(matrices):
     """
     matrix_shape = matrices.shape
     M = matrices.reshape(-1, 9)
-    # M += 1e-12 * torch.randn_like(M)
     a, b, c, d, e, f, g, h, i = [x.squeeze(-1) for x in torch.split(M, [1 for _ in range(9)], dim=-1)]
     det = 1 / (a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g))
     det *= (torch.abs(det) >= 1e-10)
