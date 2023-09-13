@@ -143,26 +143,26 @@ def to_skew_symmetric(x):
     return out
 
 
-def rotation_to_target(peaks, targets):
+def rotation_to_target(sources, targets):
     """
     Construct rotation matrices in SO3 that map the vectors of peaks to those of targets, i.e.
     It takes s and t as input and creates a rotaiton matrix R such that Rs = t
-    @param peaks: a tensor bs, 3 with peaks
+    @param sources: a tensor bs, 3 with peaks
     @param targets: a tensor bs, 3 with targets
     @return: a tensor bs, 3, 3 with the corresponding rotation matrices
     """
-    peaks = normalize(peaks, dim=-1)
+    sources = normalize(sources, dim=-1)
     targets = normalize(targets, dim=-1)
-    V = torch.cross(peaks, targets).to(peaks.device, dtype=peaks.dtype)
-    SV = torch.zeros_like(V, device=peaks.device, dtype=peaks.dtype)
+    V = torch.cross(sources, targets).to(sources.device, dtype=sources.dtype)
+    SV = torch.zeros_like(V, device=sources.device, dtype=sources.dtype)
     SV[:, 0] = -V[:, 2]
     SV[:, 1] = V[:, 1]
     SV[:, 2] = -V[:, 0]
     S = V.norm(dim=-1, p=2)
-    C = torch.diag(torch.mm(peaks, targets.T))
+    C = torch.diag(torch.mm(sources, targets.T))
     SS = to_skew_symmetric(SV)
     SS2 = torch.bmm(SS, SS)
-    I = torch.stack(peaks.shape[0] * [torch.diag(torch.ones(3, device=peaks.device, dtype=peaks.dtype))], 0)
+    I = torch.stack(sources.shape[0] * [torch.diag(torch.ones(3, device=sources.device, dtype=sources.dtype))], 0)
     R = I + SS + ((1 - C) / S ** 2)[:, None, None] * SS2
     return R
 
@@ -270,32 +270,20 @@ class ToroIndexer(nn.Module):
         expanded_candidates = all_candidates.flatten(0, 1)
         all_candidates = batched_subset_from_indices(expanded_candidates, indices.flatten(0, 1)).unflatten(0, [3, -1])
 
-        # We attach a basis to each of the candidates and rotate it around the candidate vector to produce
-        # candidate bases which are 3x3
-        rotated_bases = []
-        for i, candidates in enumerate(all_candidates):
-            permutation = [i, (i + 1) % 3, (i + 2) % 3]
-            inverse_permutation = [(i + i) % 3, (i + 1 + i) % 3, (i + 2 + i) % 3]
-            current_cell = initial_cell[permutation, :]
-            all_basis = current_cell.repeat(candidates.shape[0], candidates.shape[1], 1, 1).to(device, dtype=self.dtype)
-
-            R = rotation_to_target(all_basis[:, :, 0].flatten(0, 1), candidates.flatten(0, 1))
-            bases = torch.bmm(R, all_basis.flatten(0, 1).transpose(1, 2)).permute(0, 2, 1)
-            # recover the size of the candidate
-            bases = torch.stack(
-                [candidates.flatten(0, 1),
-                 bases[:, 1, :],
-                 bases[:, 2, :]], 1
-            )
-
-            alpha = 2 * torch.pi * torch.arange(angle_resolution, device=device, dtype=torch.int) / angle_resolution
-            R = rotations(candidates.flatten(0, 1), alpha, angle_resolution)
-
-            bts = bases.transpose(1, 2).repeat(angle_resolution, 1, 1, 1).transpose(0, 1)
-            M = torch.bmm(R.reshape(-1, 3, 3), bts.reshape(-1, 3, 3)).permute(0, 2, 1)
-            rotated_bases.append(M.view(-1, 3, 3)[:, inverse_permutation, :].unflatten(0, [bs, -1]))
-        rotated_bases = torch.cat(rotated_bases, 1)
-        return rotated_bases
+        # Creates rotated copies of the given initial_cell rotating around each axis, this forms 3 distinct groups of rotated triples
+        alpha = 2 * torch.pi * torch.arange(angle_resolution, device=device, dtype=torch.int) / angle_resolution
+        revolve_rotations = rotations(initial_cell, alpha, angle_resolution)
+        rotated_initial_cells = (revolve_rotations @ initial_cell).repeat(bs, num_top_solutions, 1, 1, 1, 1)
+        rotated_initial_cells = rotated_initial_cells.permute(2, 0, 1, 3, 4, 5)
+        sources = torch.stack([rotated_initial_cells[i, :, :, 0, i] for i in range(3)], 0)
+        R = rotation_to_target(sources.flatten(0, 2), all_candidates.flatten(0, 2))
+        R = R.unflatten(0, [3, bs, num_top_solutions])
+        # recover the magnitude of the candidate
+        rotated_initial_cells[[0, 1, 2], ..., [0, 1, 2], :] = normalize(rotated_initial_cells[[0, 1, 2], ..., [0, 1, 2], :], dim=-1)
+        rotated_initial_cells[[0, 1, 2], ..., [0, 1, 2], :] *= all_candidates[[0, 1, 2], ...].norm(dim=-1)[..., None, None]
+        rotated_bases = R[:, :, :, None, :, :] @ rotated_initial_cells
+        return rotated_bases.transpose(0, 1).flatten(1, 3).transpose(-1, -2)
+    
 
     def compute_scores_and_hkl(self, peaks, rotated_bases, dist_to_integer: float = 0.12):
         rearanged_bases = rotated_bases.permute(0, 2, 3, 1)
