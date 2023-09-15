@@ -267,6 +267,7 @@ class ToroIndexer(nn.Module):
         revolve_rotations = rotations(initial_cell, alpha, angle_resolution)
         rotated_initial_cells = (revolve_rotations @ initial_cell).repeat(bs, num_top_solutions, 1, 1, 1, 1)
         rotated_initial_cells = rotated_initial_cells.permute(2, 0, 1, 3, 4, 5)
+        # We now compute rotations that take the 3 distinct groups and attach them to all_candidates
         sources = torch.stack([rotated_initial_cells[i, :, :, 0, i] for i in range(3)], 0)
         R = rotation_to_target(sources.flatten(0, 2), all_candidates.flatten(0, 2))
         R = R.unflatten(0, [3, bs, num_top_solutions])
