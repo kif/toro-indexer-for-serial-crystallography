@@ -86,14 +86,14 @@ def bcompute_penalization(matrix, initial_cell):
     )
     # we take the maximum difference among the norm of the 3 different vectors of the basis
     total_diff_cell = torch.max(diff_cell, dim=-1).values.to(matrix.device, dtype=dtype)
-    penalization = torch.max(torch.tensor(0, dtype=dtype, device=matrix.device), total_diff_cell-1) ** 3
+    penalization = torch.max(torch.tensor(0, dtype=dtype, device=matrix.device), total_diff_cell - 1) ** 3
 
     # we also penalize according to angle discrepancies
     angles = batched_compute_angles(matrix)  # n x 3
     angles_diff = torch.abs(
         angles - batched_compute_angles(initial_cell.unsqueeze(0))[0].to(matrix.device, dtype=dtype))
     total_diff_angles = torch.max(angles_diff, dim=-1).values.to(matrix.device, dtype=dtype)
-    penalization += torch.max(torch.tensor(0, dtype=dtype, device=matrix.device), total_diff_angles-1) ** 3
+    penalization += torch.max(torch.tensor(0, dtype=dtype, device=matrix.device), total_diff_angles - 1) ** 3
     return penalization.unflatten(0, [first, second])
 
 
@@ -112,6 +112,7 @@ def batched_subset_from_indices(input, indices):
     return torch.gather(input.reshape(bs, input.shape[1], -1), 1, indices.repeat(numel, 1, 1).permute(1, 2, 0)).reshape(
         shape_output)
 
+
 def create_sphere_lattice(num_points: int = 1000000):
     """
     Samples num_points vectors from the unit sphere using the golden ratio spiral.
@@ -123,7 +124,7 @@ def create_sphere_lattice(num_points: int = 1000000):
     theta = 2 * torch.pi * i / goldenRatio
     phi = torch.arccos(1 - 2 * (i + 0.5) / num_points)
     x, y, z = torch.cos(theta) * torch.sin(phi), torch.sin(theta) * torch.sin(phi), torch.cos(phi)
-    lattice =  torch.stack([x, y, z], 1)
+    lattice = torch.stack([x, y, z], 1)
     return lattice[lattice[:, -1] >= 0]
 
 
@@ -189,7 +190,6 @@ class ToroIndexer(nn.Module):
         self.num_iterations = int(num_iterations)
         self.dtype = dtype
         self.to(dtype=dtype)
-
 
     def sample_bases(
             self,
@@ -279,11 +279,10 @@ class ToroIndexer(nn.Module):
         R = rotation_to_target(sources.flatten(0, 2), all_candidates.flatten(0, 2))
         R = R.unflatten(0, [3, bs, num_top_solutions])
         # recover the magnitude of the candidate
-        rotated_initial_cells[[0, 1, 2], ..., [0, 1, 2], :] = normalize(rotated_initial_cells[[0, 1, 2], ..., [0, 1, 2], :], dim=-1)
-        rotated_initial_cells[[0, 1, 2], ..., [0, 1, 2], :] *= all_candidates[[0, 1, 2], ...].norm(dim=-1)[..., None, None]
+        rotated_initial_cells[[0, 1, 2], :, :, :, [0, 1, 2], :] = normalize(rotated_initial_cells[[0, 1, 2], :, :, :, [0, 1, 2], :], dim=-1)
+        rotated_initial_cells[[0, 1, 2], :, :, :, [0, 1, 2], :] *= all_candidates[[0, 1, 2]].norm(dim=-1, p=2)[:, :, :, None, None]
         rotated_bases = R[:, :, :, None, :, :] @ rotated_initial_cells
         return rotated_bases.transpose(0, 1).flatten(1, 3).transpose(-1, -2)
-    
 
     def compute_scores_and_hkl(self, peaks, rotated_bases, dist_to_integer: float = 0.12):
         rearanged_bases = rotated_bases.permute(0, 2, 3, 1)
@@ -318,7 +317,7 @@ class ToroIndexer(nn.Module):
         mask &= non_zero_mask
         return torch.sum(mask, dim=-1) >= min_num_spots
 
-    def forward(self, peaks, initial_cell, min_num_spots: int, angle_resolution: int, num_top_solutions: int):
+    def forward(self, peaks, initial_cell, min_num_spots, angle_resolution, num_top_solutions):
         """
         Indexes a batched instance
         @param peaks: bacthed 3D Points on the Ewald sphere bs, num_points, 3
@@ -388,7 +387,7 @@ class ToroIndexer(nn.Module):
             max_index_per_batch = torch.argmax(penalized_scores, dim=-1).unsqueeze(1)
             # While at least one batch has a solution with at least min_num_spots
             while torch.max(
-                    torch.sum(batched_subset_from_indices(peaks_mask, max_index_per_batch).squeeze(1),dim=-1)
+                    torch.sum(batched_subset_from_indices(peaks_mask, max_index_per_batch).squeeze(1), dim=-1)
             ).int() > min_num_spots:
                 # We now find the best solution
                 solution_bases.append(batched_subset_from_indices(top_bases, max_index_per_batch).squeeze(1))
