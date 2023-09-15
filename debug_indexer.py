@@ -830,12 +830,11 @@ reciprocal_spots = torch.tensor([
      [-0.0220, -0.0819, 0.0041],
      [-0.0635, 0.1416, 0.0137]]])
 
+params = [torch.tensor(8), torch.tensor(200), torch.tensor(200)]
 solution_successes, solution_bases, solution_indices, solution_errors, _ = im(
     reciprocal_spots,
     initial_cell,
-    min_num_spots=8,
-    angle_resolution=200,
-    num_top_solutions=200
+    params
 )
 
 for batch_successes, batch_bases, batch_indices, batch_errors in zip(

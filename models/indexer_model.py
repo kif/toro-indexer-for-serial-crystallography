@@ -317,7 +317,7 @@ class ToroIndexer(nn.Module):
         mask &= non_zero_mask
         return torch.sum(mask, dim=-1) >= min_num_spots
 
-    def forward(self, peaks, initial_cell, min_num_spots, angle_resolution, num_top_solutions):
+    def forward(self, peaks, initial_cell, params):
         """
         Indexes a batched instance
         @param peaks: bacthed 3D Points on the Ewald sphere bs, num_points, 3
@@ -333,6 +333,10 @@ class ToroIndexer(nn.Module):
         solution_penalization (float tensor with the penalization used in the solutions bs x num_crystals)
         """
         with torch.no_grad():
+            min_num_spots = int(params[0])
+            angle_resolution = int(params[1])
+            num_top_solutions = int(params[2])
+
             peaks = peaks.to(dtype=self.dtype)
             # fixed hyperparameter
             valid_integer_projection_radius = float(0.2)

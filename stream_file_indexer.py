@@ -103,12 +103,11 @@ for path in mylist:
                 start_event = torch.cuda.Event(enable_timing=True)
                 end_event = torch.cuda.Event(enable_timing=True)
             # Warm-up
+            params = [torch.tensor(8), torch.tensor(angle_resolution), torch.tensor(num_top_solutions)]
             im(
                 torch.randn(5, 80, 3, device=device),
                 initial_cell,
-                min_num_spots=8,
-                angle_resolution=angle_resolution,
-                num_top_solutions=num_top_solutions
+                params
             )
             frames_per_second = []
 
@@ -120,13 +119,13 @@ for path in mylist:
                     start_event.record()
                 else:
                     start_time = time.perf_counter()
+            params = [torch.tensor(8), torch.tensor(angle_resolution), torch.tensor(num_top_solutions)]
             solution_successes, solution_triples, solution_masks, solution_errors, solution_penalization = im(
                 source,
                 initial_cell,
-                min_num_spots=8,
-                angle_resolution=angle_resolution,
-                num_top_solutions=num_top_solutions
+                params
             )
+
             if args["speed_test"]:
                 if not args['cpu']:
                     end_event.record()
