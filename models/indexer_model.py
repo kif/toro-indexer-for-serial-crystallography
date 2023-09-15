@@ -231,8 +231,7 @@ class ToroIndexer(nn.Module):
         non_zero_mask = (torch.sum(torch.abs(peaks), dim=-1) != 0)[None, :, None, :]
         is_inlier &= non_zero_mask
         combined_loss = torch.sum(is_inlier, dim=-1)
-        indices2 = torch.topk(combined_loss, num_top_solutions, dim=-1, largest=True)[0]
-        indices = combined_loss.int().sort(descending=True, dim=-1).indices[..., : num_top_solutions].to(device)
+        indices = torch.topk(combined_loss, num_top_solutions, dim=-1, largest=True)[1]
 
         # We explicitly create the candidates from the unit sphere mapping by triplicating it
         # and then scaling it accordingly
@@ -262,15 +261,8 @@ class ToroIndexer(nn.Module):
 
         all_candidates = all_candidates.transpose(0, 1)
 
-        # After TLS, we score and rank the resulting vectors and take only the top num_top_solutions
-        is_inlier = torch.isclose(projections, h, atol=0.01, rtol=0.)
-        is_inlier &= non_zero_mask
-        combined_loss = torch.sum(is_inlier.int(), dim=-1, dtype=torch.int)
-        indices = combined_loss.int().sort(descending=True, dim=-1).indices[..., :num_top_solutions].to(device)
-        expanded_candidates = all_candidates.flatten(0, 1)
-        all_candidates = batched_subset_from_indices(expanded_candidates, indices.flatten(0, 1)).unflatten(0, [3, -1])
-
-        # Creates rotated copies of the given initial_cell rotating around each axis, this forms 3 distinct groups of rotated triples
+        # Creates rotated copies of the given initial_cell rotating around each axis,
+        # this forms 3 distinct groups of rotated triples
         alpha = 2 * torch.pi * torch.arange(angle_resolution, device=device, dtype=torch.int) / angle_resolution
         revolve_rotations = rotations(initial_cell, alpha, angle_resolution)
         rotated_initial_cells = (revolve_rotations @ initial_cell).repeat(bs, num_top_solutions, 1, 1, 1, 1)
