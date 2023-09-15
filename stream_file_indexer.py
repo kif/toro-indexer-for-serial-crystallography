@@ -126,6 +126,10 @@ for path in mylist:
                 params
             )
 
+            # # saving the model for C++
+            # sm = torch.jit.script(im)
+            # sm.save(f"traced_model_{args['model']}.pt")
+
             if args["speed_test"]:
                 if not args['cpu']:
                     end_event.record()

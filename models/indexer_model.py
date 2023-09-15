@@ -227,10 +227,11 @@ class ToroIndexer(nn.Module):
         projections = torch.stack([unit_projections * factor for factor in scaling], 0)
         h = torch.round(projections)
 
-        diff = torch.abs(projections - h)
-        is_inlier = diff <= dist_to_integer
-        is_inlier &= (torch.sum(torch.abs(peaks), dim=-1) != 0)[None, :, None, :]
+        is_inlier = torch.isclose(projections, h, atol=dist_to_integer, rtol=0.)
+        non_zero_mask = (torch.sum(torch.abs(peaks), dim=-1) != 0)[None, :, None, :]
+        is_inlier &= non_zero_mask
         combined_loss = torch.sum(is_inlier, dim=-1)
+        indices2 = torch.topk(combined_loss, num_top_solutions, dim=-1, largest=True)[0]
         indices = combined_loss.int().sort(descending=True, dim=-1).indices[..., : num_top_solutions].to(device)
 
         # We explicitly create the candidates from the unit sphere mapping by triplicating it
@@ -262,9 +263,8 @@ class ToroIndexer(nn.Module):
         all_candidates = all_candidates.transpose(0, 1)
 
         # After TLS, we score and rank the resulting vectors and take only the top num_top_solutions
-        diff = torch.abs(projections - h)
-        is_inlier = diff <= 0.01
-        is_inlier &= (torch.sum(torch.abs(peaks), dim=-1) != 0)[None, :, None, :]
+        is_inlier = torch.isclose(projections, h, atol=0.01, rtol=0.)
+        is_inlier &= non_zero_mask
         combined_loss = torch.sum(is_inlier.int(), dim=-1, dtype=torch.int)
         indices = combined_loss.int().sort(descending=True, dim=-1).indices[..., :num_top_solutions].to(device)
         expanded_candidates = all_candidates.flatten(0, 1)
