@@ -16,12 +16,11 @@ def batched_invert_matrix(matrices):
     matrix_shape = matrices.shape
     M = matrices.reshape(-1, 9)
     a, b, c, d, e, f, g, h, i = [x.squeeze(-1) for x in torch.split(M, [1 for _ in range(9)], dim=-1)]
-    det = 1 / (a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g))
+    det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
     det *= (torch.abs(det) >= 1e-10)
     entries = torch.stack([e * i - f * h, c * h - b * i, b * f - c * e, f * g - d * i,
                            a * i - c * g, c * d - a * f, d * h - e * g, b * g - a * h, a * e - b * d], dim=1)
-    entries *= det[:, None]
-    entries = entries.reshape(-1, 3, 3)
+    entries /= det[:, None]
     return entries.reshape(matrix_shape)
 
 
@@ -113,19 +112,32 @@ def batched_subset_from_indices(input, indices):
         shape_output)
 
 
+# def create_sphere_lattice(num_points: int = 1000000):
+#     """
+#     Samples num_points vectors from the unit sphere using the golden ratio spiral.
+#     @param num_points: The number of vectors to be sampled
+#     @return: A collection of sampled vectors.
+#     """
+#     goldenRatio = (1 + 5 ** 0.5) / 2
+#     i = torch.arange(num_points)
+#     theta = 2 * torch.pi * i / goldenRatio
+#     phi = torch.arccos(1 - 2 * (i + 0.5) / num_points)
+#     x, y, z = torch.cos(theta) * torch.sin(phi), torch.sin(theta) * torch.sin(phi), torch.cos(phi)
+#     lattice = torch.stack([x, y, z], 1)
+#     return lattice[lattice[:, -1] >= 0]
+
+from numpy import arange, pi, sin, cos, arccos
 def create_sphere_lattice(num_points: int = 1000000):
-    """
-    Samples num_points vectors from the unit sphere using the golden ratio spiral.
-    @param num_points: The number of vectors to be sampled
-    @return: A collection of sampled vectors.
-    """
     goldenRatio = (1 + 5 ** 0.5) / 2
-    i = torch.arange(num_points)
-    theta = 2 * torch.pi * i / goldenRatio
-    phi = torch.arccos(1 - 2 * (i + 0.5) / num_points)
-    x, y, z = torch.cos(theta) * torch.sin(phi), torch.sin(theta) * torch.sin(phi), torch.cos(phi)
-    lattice = torch.stack([x, y, z], 1)
-    return lattice[lattice[:, -1] >= 0]
+    i = arange(0, num_points)
+    theta = 2 * pi * i / goldenRatio
+    phi = arccos(1 - 2 * (i + 0.5) / num_points)
+    x, y, z = cos(theta) * sin(phi), sin(theta) * sin(phi), cos(phi);
+    lattice = torch.randn(num_points, 3)
+    lattice[:, 0] = torch.FloatTensor(x)
+    lattice[:, 1] = torch.FloatTensor(y)
+    lattice[:, 2] = torch.FloatTensor(z)
+    return lattice
 
 
 def to_skew_symmetric(x):
@@ -254,28 +266,60 @@ class ToroIndexer(nn.Module):
             expanded_peaks = expanded_peaks.reshape(bs, 3 * num_top_solutions, -1, 3)
 
             # Use a fitting but with a mask that takes only into account points closer to their target
-            refined_candidates = batched_regression(
-                expanded_peaks * flat_mask[..., None], flat_h * flat_mask[..., None]
-            )
+            if peaks.device == torch.device('cpu'):
+                refined_candidates = torch.linalg.lstsq(
+                    expanded_peaks * flat_mask[..., None], flat_h * flat_mask[..., None]
+                )[0]
+            else:
+                refined_candidates = batched_regression(
+                    expanded_peaks * flat_mask[..., None], flat_h * flat_mask[..., None]
+                )
             all_candidates = refined_candidates.unflatten(1, [3, -1]).squeeze(-1)
 
         all_candidates = all_candidates.transpose(0, 1)
 
-        # Creates rotated copies of the given initial_cell rotating around each axis,
-        # this forms 3 distinct groups of rotated triples
-        alpha = 2 * torch.pi * torch.arange(angle_resolution, device=device, dtype=torch.int) / angle_resolution
-        revolve_rotations = rotations(initial_cell, alpha, angle_resolution)
-        rotated_initial_cells = (revolve_rotations @ initial_cell).repeat(bs, num_top_solutions, 1, 1, 1, 1)
-        rotated_initial_cells = rotated_initial_cells.permute(2, 0, 1, 3, 4, 5)
-        # We now compute rotations that take the 3 distinct groups and attach them to all_candidates
-        sources = torch.stack([rotated_initial_cells[i, :, :, 0, i] for i in range(3)], 0)
-        R = rotation_to_target(sources.flatten(0, 2), all_candidates.flatten(0, 2))
-        R = R.unflatten(0, [3, bs, num_top_solutions])
-        # recover the magnitude of the candidate
-        rotated_initial_cells[[0, 1, 2], :, :, :, [0, 1, 2], :] = normalize(rotated_initial_cells[[0, 1, 2], :, :, :, [0, 1, 2], :], dim=-1)
-        rotated_initial_cells[[0, 1, 2], :, :, :, [0, 1, 2], :] *= all_candidates[[0, 1, 2]].norm(dim=-1, p=2)[:, :, :, None, None]
-        rotated_bases = R[:, :, :, None, :, :] @ rotated_initial_cells
-        return rotated_bases.transpose(0, 1).flatten(1, 3).transpose(-1, -2)
+        # We attach a basis to each of the candidates and rotate it around the candidate vector to produce
+        # candidate bases which are 3x3
+        rotated_bases = []
+        for i, candidates in enumerate(all_candidates):
+            permutation = [i, (i + 1) % 3, (i + 2) % 3]
+            inverse_permutation = [(i + i) % 3, (i + 1 + i) % 3, (i + 2 + i) % 3]
+            current_cell = initial_cell[permutation, :]
+            all_basis = current_cell.repeat(candidates.shape[0], candidates.shape[1], 1, 1).to(device, dtype=self.dtype)
+
+            R = rotation_to_target(all_basis[:, :, 0].flatten(0, 1), candidates.flatten(0, 1))
+            bases = torch.bmm(R, all_basis.flatten(0, 1).transpose(1, 2)).permute(0, 2, 1)
+            # recover the size of the candidate
+            bases = torch.stack(
+                [candidates.flatten(0, 1),
+                 bases[:, 1, :],
+                 bases[:, 2, :]], 1
+            )
+
+            alpha = 2 * torch.pi * torch.arange(angle_resolution, device=device, dtype=torch.int) / angle_resolution
+            R = rotations(candidates.flatten(0, 1), alpha, angle_resolution)
+
+            bts = bases.transpose(1, 2).repeat(angle_resolution, 1, 1, 1).transpose(0, 1)
+            M = torch.bmm(R.reshape(-1, 3, 3), bts.reshape(-1, 3, 3)).permute(0, 2, 1)
+            rotated_bases.append(M.view(-1, 3, 3)[:, inverse_permutation, :].unflatten(0, [bs, -1]))
+        rotated_bases = torch.cat(rotated_bases, 1)
+        return rotated_bases
+
+        # # Creates rotated copies of the given initial_cell rotating around each axis,
+        # # this forms 3 distinct groups of rotated triples
+        # alpha = 2 * torch.pi * torch.arange(angle_resolution, device=device, dtype=torch.int) / angle_resolution
+        # revolve_rotations = rotations(initial_cell, alpha, angle_resolution)
+        # rotated_initial_cells = (revolve_rotations @ initial_cell).repeat(bs, num_top_solutions, 1, 1, 1, 1)
+        # rotated_initial_cells = rotated_initial_cells.permute(2, 0, 1, 3, 4, 5)
+        # # We now compute rotations that take the 3 distinct groups and attach them to all_candidates
+        # sources = torch.stack([rotated_initial_cells[i, :, :, 0, i] for i in range(3)], 0)
+        # R = rotation_to_target(sources.flatten(0, 2), all_candidates.flatten(0, 2))
+        # R = R.unflatten(0, [3, bs, num_top_solutions])
+        # # recover the magnitude of the candidate
+        # rotated_initial_cells[[0, 1, 2], :, :, :, [0, 1, 2], :] = normalize(rotated_initial_cells[[0, 1, 2], :, :, :, [0, 1, 2], :], dim=-1)
+        # rotated_initial_cells[[0, 1, 2], :, :, :, [0, 1, 2], :] *= all_candidates[[0, 1, 2]].norm(dim=-1, p=2)[:, :, :, None, None]
+        # rotated_bases = R[:, :, :, None, :, :] @ rotated_initial_cells
+        # return rotated_bases.transpose(0, 1).flatten(1, 3).transpose(-1, -2)
 
     def compute_scores_and_hkl(self, peaks, rotated_bases, dist_to_integer: float = 0.12):
         rearanged_bases = rotated_bases.permute(0, 2, 3, 1)
@@ -445,7 +489,7 @@ class ToroIndexer(nn.Module):
             masked_peaks = peaks * peaks_mask[..., None]
             targets = torch.round(masked_peaks @ bases.transpose(-2, -1))
             # The regression intrinsically ignores all zero vectors that have zero targets as their residual is zero
-            transposed_bases = batched_regression(masked_peaks, targets)
+            transposed_bases = torch.linalg.lstsq(masked_peaks, targets)[0] if peaks.device == torch.device('cpu') else batched_regression(masked_peaks, targets)
             bases = transposed_bases.transpose(-2, -1)
 
             # we compute now the inverse of the targets in reciprocal space which will be compared against peaks
