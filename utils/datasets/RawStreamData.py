@@ -41,7 +41,7 @@ def stream_to_dictionary(streamfile):
                 line = loop_over_next_N_lines(text_file, 3)
                 ln += 3
                 # save the image index and save it as zero-based
-                im_num = np.int(line.split()[-1]) - 1
+                im_num = int(line.split()[-1]) - 1
                 tmpframe["Image serial number"] = im_num
 
                 # loop over the next 2 lines to see if the indexer worked
@@ -64,14 +64,14 @@ def stream_to_dictionary(streamfile):
                         keyw = ""
 
                 # get the number of peaks
-                num_peaks = np.int(line.split()[-1])
+                num_peaks = int(line.split()[-1])
                 tmpframe["num_peaks"] = num_peaks
 
                 # get the resolution
                 line = text_file.readline()
                 ln += 1
-                tmpframe["peak_resolution [A]"] = np.float(line.split()[-2])
-                tmpframe["peak_resolution [nm^-1]"] = np.float(line.split()[2])
+                tmpframe["peak_resolution [A]"] = float(line.split()[-2])
+                tmpframe["peak_resolution [nm^-1]"] = float(line.split()[2])
 
                 if num_peaks > 0:
                     # skip the first 2 lines
@@ -85,7 +85,7 @@ def stream_to_dictionary(streamfile):
                     # dim1 = ss, dim2 = fs
                     tmpframe["peaks"] = np.asarray(
                         [text_file.readline().split()[:4] for tmpc in range(num_peaks)]
-                    ).astype(np.float)
+                    ).astype(float)
 
                 ##### Get the PREDICTIONS after indexing #####
 
@@ -98,7 +98,7 @@ def stream_to_dictionary(streamfile):
                     line = text_file.readline().split()
                     tmpframe["Cell parameters"] = np.hstack(
                         [line[2:5], line[6:9]]
-                    ).astype(np.float)
+                    ).astype(float)
 
                     # Get the reciprocal unit cell as a 3x3 matrix
                     reciprocal_cell = []
@@ -107,7 +107,7 @@ def stream_to_dictionary(streamfile):
                         ln += 1
                     tmpframe["reciprocal_cell_matrix"] = np.asarray(
                         reciprocal_cell
-                    ).astype(np.float)
+                    ).astype(float)
 
                     # Save the lattice type
                     tmpframe["lattice_type"] = text_file.readline().split()[-1]
@@ -123,11 +123,11 @@ def stream_to_dictionary(streamfile):
                         line = loop_over_next_N_lines(text_file, 1).split()
                         ln += 1
 
-                    tmpframe["diffraction_resolution_limit [nm^-1]"] = np.float(line[2])
-                    tmpframe["diffraction_resolution_limit [A]"] = np.float(line[5])
+                    tmpframe["diffraction_resolution_limit [nm^-1]"] = float(line[2])
+                    tmpframe["diffraction_resolution_limit [A]"] = float(line[5])
 
                     # get the number of predicted reflections
-                    num_reflections = np.int(text_file.readline().split()[-1])
+                    num_reflections = int(text_file.readline().split()[-1])
                     tmpframe["num_predicted_reflections"] = num_reflections
 
                     # skip a few lines
@@ -145,7 +145,7 @@ def stream_to_dictionary(streamfile):
                             ln += 1
                         tmpframe["predicted_reflections"] = np.asarray(
                             reflections_pos
-                        ).astype(np.float)
+                        ).astype(float)
                     # continue reading
                     line = text_file.readline()
                     ln += 1
@@ -197,13 +197,13 @@ def get_experiment_info(streamfile):
     (out, err) = proc.communicate()
     out = out.decode('UTF-8')
     # convert to angstrom
-    photon_energy = 12398.42 / np.float(max([int(i) for i in set(out.split()) if i.isnumeric()]))
+    photon_energy = 12398.42 / float(max([int(i) for i in set(out.split()) if i.isnumeric()]))
     proc = subprocess.Popen("grep -A11 'Begin unit cell'  {}".format(streamfile), stdout=subprocess.PIPE, shell=True)
     (out, err) = proc.communicate()
     out = out.decode('UTF-8')
     cellstr = [line for line in out.split("\n") if len(line) > 0 if len(line) > 1 if
                line.split()[0] in {"a", "b", "c", "al", "be", "ga"}]
-    cell = np.array([np.float(line.split()[2]) for line in cellstr])
+    cell = np.array([float(line.split()[2]) for line in cellstr])
 
     return abs(posx), abs(posy), clen, photon_energy, cell
 
@@ -238,6 +238,7 @@ class RawStreamDS(torch.utils.data.Dataset):
             self.instances[key]["det_y"] = np.array([0., 1., 0.])
 
         self.sequence_length = sequence_length
+        self.keys = list(self.instances.keys())
 
 
     def project_onto_sphere(self, data, param):
@@ -257,8 +258,9 @@ class RawStreamDS(torch.utils.data.Dataset):
         )
         return torch.FloatTensor(sp3d)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, key_idx):
         with torch.no_grad():
+            idx = self.keys[key_idx]
             frame = self.instances[idx]
             # if it has no peaks then we need to return empty lists
             if not 'peaks' in frame:
