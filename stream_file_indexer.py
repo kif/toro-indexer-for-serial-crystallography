@@ -89,13 +89,14 @@ for path in mylist:
     else:
         dataset = data_loader
 
-    cell_parameters = mds.instances[0]['initial_cell']
+    key0 = list(mds.instances.keys())[0]
+    cell_parameters = mds.instances[key0]['initial_cell']
     initial_cell = get_ideal_basis(cell_parameters)
 
     solution_triples_list = []
     solution_indices_list = []
 
-    wlen = mds.instances[0]['wavelength']
+    wlen = mds.instances[key0]['wavelength']
     with torch.no_grad():
         if args["speed_test"]:
             # Initialize CUDA events
