@@ -15,12 +15,10 @@ import lovely_tensors as lt
 lt.monkey_patch()
 
 precise = "precise"
-middle = "middle"
-fast = "fast"
-insane = "insane"
+fast = "real_time"
 
 parser = ArgumentParser(description="ToRO testing")
-parser.add_argument("--model", type=str, choices={precise, middle, fast, insane},
+parser.add_argument("--model", type=str, default=precise, choices={precise, fast},
                     help="Choose the desired parameters to get the trade-off between speed and performance.")
 parser.add_argument("--batch_size", type=int, default=50, help="Choose the largest batch size that fits in your GPU.")
 parser.add_argument("--speed_test", action='store_true',
@@ -29,8 +27,8 @@ parser.add_argument("--cpu", action='store_true', help="Run in CPU instead of GP
 args = vars(parser.parse_args())
 
 cwd = os.getcwd()
-streams_path = cwd + "/data/lyso"
-# streams_path = cwd+"/data/performance_test"
+# streams_path = cwd + "/data/lyso"
+streams_path = cwd+"/data/performance_test"
 mylist = glob.glob(streams_path + '/*.stream', recursive=True)
 print("List of stream files to be used", mylist)
 
@@ -49,26 +47,13 @@ if args["model"] == precise:
     lattice_size = 50000
     angle_resolution = 150
     num_top_solutions = 400
-
-elif args["model"] == middle:
-    # good precision, good speed
-    lattice_size = 25000
-    angle_resolution = 150
-    num_top_solutions = 200
-
 elif args["model"] == fast:
     # fast params
-    lattice_size = 20000
-    angle_resolution = 100
-    num_top_solutions = 50
-
-elif args["model"] == insane:
-    # super fast params
     lattice_size = 10000
     angle_resolution = 100
     num_top_solutions = 25
 else:
-    raise ValueError("No --model was selected, please run with --model={precise, middle, fast, insane}")
+    raise ValueError(f"No --model was selected, please run with --model=({precise}, {fast})")
 
 im = ToroIndexer(
     lattice_size=lattice_size,
@@ -81,12 +66,17 @@ im = ToroIndexer(
 print("batch_size ", batch_size)
 for path in mylist:
     mds = RawStreamDS(path, spot_sequence_length, no_padding=False)
-    data_loader = DataLoader(mds, batch_size=batch_size, shuffle=True)
+
     if args["speed_test"]:
+        # If the dataset is small, we go over the dataset a few times to have more relieble metrics
+        expanded_mds = torch.utils.data.ConcatDataset((10000 // len(mds)) * [mds])
+        print("Size of expanded ds ", len(expanded_mds))
+        data_loader = DataLoader(expanded_mds, batch_size=batch_size, shuffle=True)
         # We load the entire dataset into memory already batched before starting the test performance
         print("Loading dataset into memory... You are running a speed_test, results will not be saved.")
         dataset = [(source, indices) for source, indices in tqdm(data_loader)]
     else:
+        data_loader = DataLoader(mds, batch_size=batch_size, shuffle=True)
         dataset = data_loader
 
     key0 = list(mds.instances.keys())[0]
@@ -126,10 +116,6 @@ for path in mylist:
                 initial_cell,
                 params
             )
-
-            # # saving the model for C++
-            # sm = torch.jit.script(im)
-            # sm.save(f"traced_model_{args['model']}.pt")
 
             if args["speed_test"]:
                 if not args['cpu']:

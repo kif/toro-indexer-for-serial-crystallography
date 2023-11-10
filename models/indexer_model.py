@@ -509,3 +509,8 @@ class ToroIndexer(nn.Module):
         )
 
         return bases, peaks_mask, error * peaks_mask, penalization
+
+    def savel_model(self, name="toro"):
+        # saving the model for C++
+        sm = torch.jit.script(self)
+        sm.save(f"traced_model_{name}.pt")
