@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 from collections import defaultdict
-from utils.functions_SX import map_3D
+from toro.utils.functions_SX import map_3D
 # from crystfelparser.crystfelparser import stream_to_dictionary
 
 def stream_to_dictionary(streamfile):

@@ -369,3 +369,4 @@ data/Lyso_stratified_by_spots/Lyso_FILTERED_80_spots.stream
 data/Lyso_stratified_by_spots/Lyso_FILTERED_90_spots.stream
 data/Lyso_stratified_by_spots/Lyso_FILTERED_100_spots.stream
 data/Lyso_80/Lyso_lbinsane_noall_1_cpu.stream
+notebooks/traced_model_toro.pt

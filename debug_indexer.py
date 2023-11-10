@@ -1,4 +1,4 @@
-from models.indexer_model import ToroIndexer
+from toro.models.indexer_model import ToroIndexer
 import torch
 
 import lovely_tensors as lt

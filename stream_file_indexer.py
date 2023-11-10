@@ -1,12 +1,11 @@
-import torch
 import glob
-from utils.datasets.RawStreamData import RawStreamDS
-from utils.functions_SX import get_ideal_basis
+from toro.utils.datasets.RawStreamData import RawStreamDS
+from toro.utils.functions_SX import get_ideal_basis
 import torch
 import numpy as np
 from tqdm import tqdm
 from torch.utils.data import DataLoader
-from models.indexer_model import ToroIndexer
+from toro.models.indexer_model import ToroIndexer
 import os
 import time
 from argparse import ArgumentParser

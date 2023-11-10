@@ -10,12 +10,13 @@ ensuring it adapts to a broad range of computational setups.
 
 The entire model code lies within 500 lines stored in models/indexer_model.py. In there, the class ToroIndexer is all you need to run indexing.
 
-## Trying the indexer
+## Installing TORO
 Just clone this repository, install the requirements and follow the instructions below to run the indexer.
 Click the `Settings` tab where you will find the
 git repo URLs - use `git` to clone the project on whichever machine you want.
 Two streams of data are provided with this repository to try the indexer, a set with 10000 frames from the Lyso molecule, 
 and the dataset we used for our benchmarks called `performance_test`. You can find its description in the accompanying paper.  
+Go into the repository and run `pip install -e .` to install the current version of toro. 
 
 If you want to try it without installing it locally, from the Renku platform click on the `Sessions` tab and start a new session.
 This will start an interactive environment right in your browser. 
