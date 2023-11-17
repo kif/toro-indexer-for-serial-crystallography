@@ -36,14 +36,14 @@ def batched_regression(X, B):
     return XXX @ B
 
 
-def rotations(rodrigues_vector, alpha, angle_resolution: int):
+def rotations(rodrigues_vector, alpha):
     """
     This function uses the Rodrigues forumla to create rotations around the given rodrigues_vector with the given angle alpha
     @param rodrigues_vector: The vector around which to create the rotation matrices
     @param alpha: The angle od the rotation
-    @param angle_resolution: The number of samples to be generated.
     @return: A tensor of bs, angle_resolution, 3, 3 containing bs * angle resolution rotation matrices, each rotating the corresponding alpha degrees given
     """
+    angle_resolution = len(alpha)
     dtype = rodrigues_vector.dtype
     ip = normalize(rodrigues_vector)
     new_ip = ip.flip(1)
@@ -297,29 +297,13 @@ class ToroIndexer(nn.Module):
             )
 
             alpha = 2 * torch.pi * torch.arange(angle_resolution, device=device, dtype=torch.int) / angle_resolution
-            R = rotations(candidates.flatten(0, 1), alpha, angle_resolution)
+            R = rotations(candidates.flatten(0, 1), alpha)
 
             bts = bases.transpose(1, 2).repeat(angle_resolution, 1, 1, 1).transpose(0, 1)
             M = torch.bmm(R.reshape(-1, 3, 3), bts.reshape(-1, 3, 3)).permute(0, 2, 1)
             rotated_bases.append(M.view(-1, 3, 3)[:, inverse_permutation, :].unflatten(0, [bs, -1]))
         rotated_bases = torch.cat(rotated_bases, 1)
         return rotated_bases
-
-        # # Creates rotated copies of the given initial_cell rotating around each axis,
-        # # this forms 3 distinct groups of rotated triples
-        # alpha = 2 * torch.pi * torch.arange(angle_resolution, device=device, dtype=torch.int) / angle_resolution
-        # revolve_rotations = rotations(initial_cell, alpha, angle_resolution)
-        # rotated_initial_cells = (revolve_rotations @ initial_cell).repeat(bs, num_top_solutions, 1, 1, 1, 1)
-        # rotated_initial_cells = rotated_initial_cells.permute(2, 0, 1, 3, 4, 5)
-        # # We now compute rotations that take the 3 distinct groups and attach them to all_candidates
-        # sources = torch.stack([rotated_initial_cells[i, :, :, 0, i] for i in range(3)], 0)
-        # R = rotation_to_target(sources.flatten(0, 2), all_candidates.flatten(0, 2))
-        # R = R.unflatten(0, [3, bs, num_top_solutions])
-        # # recover the magnitude of the candidate
-        # rotated_initial_cells[[0, 1, 2], :, :, :, [0, 1, 2], :] = normalize(rotated_initial_cells[[0, 1, 2], :, :, :, [0, 1, 2], :], dim=-1)
-        # rotated_initial_cells[[0, 1, 2], :, :, :, [0, 1, 2], :] *= all_candidates[[0, 1, 2]].norm(dim=-1, p=2)[:, :, :, None, None]
-        # rotated_bases = R[:, :, :, None, :, :] @ rotated_initial_cells
-        # return rotated_bases.transpose(0, 1).flatten(1, 3).transpose(-1, -2)
 
     def compute_scores_and_hkl(self, peaks, rotated_bases, dist_to_integer: float = 0.12):
         rearanged_bases = rotated_bases.permute(0, 2, 3, 1)
