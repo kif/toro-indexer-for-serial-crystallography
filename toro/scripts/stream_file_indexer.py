@@ -24,12 +24,12 @@ def main():
     parser.add_argument("--speed_test", action='store_true',
                         help="Activate when testing speed to remove uneccesary actions, no results will be stored, only the speed will be shown")
     parser.add_argument("--cpu", action='store_true', help="Run in CPU instead of GPU")
+    parser.add_argument("args", metavar="FILE", help="List of streams to index", nargs='*')
     args = vars(parser.parse_args())
     
-    cwd = os.getcwd()
-    # streams_path = cwd + "/data/lyso"
-    streams_path = cwd+"/data/performance_test"
-    mylist = glob.glob(streams_path + '/*.stream', recursive=True)
+    mylist = []
+    for i in args.args:
+        mylist += glob.glob(i, recursive=True)
     print("List of stream files to be used", mylist)
     
     device = torch.device('cuda') if torch.cuda.is_available() else 'cpu'
