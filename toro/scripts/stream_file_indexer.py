@@ -28,7 +28,7 @@ def main():
     args = vars(parser.parse_args())
     
     mylist = []
-    for i in args.args:
+    for i in args["args"]:
         mylist += glob.glob(i, recursive=True)
     print("List of stream files to be used", mylist)
     
