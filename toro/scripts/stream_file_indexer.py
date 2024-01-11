@@ -1,14 +1,14 @@
-import glob
-from toro.utils.datasets.RawStreamData import RawStreamDS
-from toro.utils.functions_SX import get_ideal_basis
-import torch
-import numpy as np
-from tqdm import tqdm
-from torch.utils.data import DataLoader
-from toro.models.indexer_model import ToroIndexer
 import os
 import time
+import glob
 from argparse import ArgumentParser
+import numpy as np
+import torch
+from tqdm import tqdm
+from toro.utils.datasets.RawStreamData import RawStreamDS
+from toro.utils.functions_SX import get_ideal_basis
+from torch.utils.data import DataLoader
+from toro.models.indexer_model import ToroIndexer
 import lovely_tensors as lt
 
 lt.monkey_patch()
