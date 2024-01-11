@@ -1,0 +1,32 @@
+[build-system]
+requires = [ "setuptools" ]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "toro"  # as it would appear on PyPI
+version = "1.0"
+description = "TORO SX"
+readme = "README.md"
+authors = [
+    {name = "Luis Barba", email = "luis.barba-flores@psi.ch"},
+]
+
+
+dependencies = [  "torch==2.0.0",
+		          "numpy==1.23.5",
+		          "lovely-numpy==0.2.8",
+		          "lovely-tensors==0.1.14",
+		          "matplotlib==3.6.2",
+		          "tqdm==4.65.0",]
+
+[tool.setuptools]
+packages = ["toro", 
+            "toro.models", 
+            "toro.scripts",
+            "toro.utils",
+            "toro.utils.datasets",
+            ]
+
+[project.scripts]
+stream_file_indexer = "toro.scripts.stream_file_indexer:main"
+
